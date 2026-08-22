@@ -1,0 +1,256 @@
+{
+  "household_id": "demo",
+  "members": [
+    {
+      "person_id": "alex",
+      "name": "Alex",
+      "phone": null,
+      "email": "REPLACE-alex@example.com",
+      "is_cook": true
+    },
+    {
+      "person_id": "morgan",
+      "name": "Morgan",
+      "phone": null,
+      "email": "REPLACE-morgan@example.com",
+      "is_cook": true
+    },
+    {
+      "person_id": "riley",
+      "name": "Riley",
+      "phone": null,
+      "email": "REPLACE-riley@example.com",
+      "is_cook": false
+    },
+    {
+      "person_id": "jesse",
+      "name": "Jesse",
+      "phone": null,
+      "email": "REPLACE-jesse@example.com",
+      "is_cook": false
+    }
+  ],
+  "meals": [
+    {
+      "meal_id": "flat-sushi",
+      "name": "Flat Sushi Day",
+      "protein": null,
+      "effort_minutes": 0,
+      "is_takeout": true,
+      "status": "safe",
+      "tags": [
+        "tradition",
+        "takeout"
+      ]
+    },
+    {
+      "meal_id": "chili",
+      "name": "Chili",
+      "protein": "beef",
+      "effort_minutes": 45,
+      "status": "safe",
+      "tags": [
+        "cook-once"
+      ]
+    },
+    {
+      "meal_id": "sloppy-chicken",
+      "name": "Sloppy chicken sandwiches",
+      "protein": "chicken",
+      "effort_minutes": 30,
+      "status": "safe",
+      "tags": [
+        "fast"
+      ]
+    },
+    {
+      "meal_id": "beef-broccoli",
+      "name": "Beef and broccoli",
+      "protein": "beef",
+      "effort_minutes": 30,
+      "status": "safe",
+      "tags": [
+        "fast"
+      ]
+    },
+    {
+      "meal_id": "roast-chicken",
+      "name": "Roast chicken dinner",
+      "protein": "chicken",
+      "effort_minutes": 90,
+      "status": "safe",
+      "tags": [
+        "weekend"
+      ]
+    },
+    {
+      "meal_id": "roast-pork",
+      "name": "Roast pork dinner",
+      "protein": "pork",
+      "effort_minutes": 90,
+      "status": "safe",
+      "tags": [
+        "weekend"
+      ]
+    },
+    {
+      "meal_id": "burgers",
+      "name": "Burgers",
+      "protein": "beef",
+      "effort_minutes": 25,
+      "status": "safe",
+      "tags": [
+        "fast"
+      ]
+    },
+    {
+      "meal_id": "fried-rice",
+      "name": "Chicken fried rice",
+      "protein": "chicken",
+      "effort_minutes": 25,
+      "status": "safe",
+      "tags": [
+        "fast",
+        "uses-leftovers"
+      ]
+    },
+    {
+      "meal_id": "tacos",
+      "name": "Tacos",
+      "protein": "beef",
+      "effort_minutes": 30,
+      "status": "retired",
+      "tags": [
+        "was-a-favourite"
+      ]
+    }
+  ],
+  "fence": [
+    {
+      "type": "fixed_slot",
+      "weekday": 1,
+      "meal_id": "flat-sushi"
+    },
+    {
+      "type": "takeout_budget",
+      "max_per_week": 1
+    },
+    {
+      "type": "frequency_target",
+      "protein": "chicken",
+      "min_per_week": 2,
+      "max_per_week": 3
+    }
+  ],
+  "history": [
+    {
+      "week_start": "2026-08-03",
+      "slots": [
+        {
+          "on_date": "2026-08-03",
+          "meal_id": "roast-chicken",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-04",
+          "meal_id": "flat-sushi",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-05",
+          "meal_id": "chili",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-06",
+          "meal_id": "fried-rice",
+          "cook_id": "morgan"
+        },
+        {
+          "on_date": "2026-08-07",
+          "meal_id": "sloppy-chicken",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-08",
+          "meal_id": "roast-pork",
+          "cook_id": "morgan"
+        },
+        {
+          "on_date": "2026-08-09",
+          "meal_id": "burgers",
+          "cook_id": "alex"
+        }
+      ]
+    },
+    {
+      "week_start": "2026-08-10",
+      "slots": [
+        {
+          "on_date": "2026-08-10",
+          "meal_id": "beef-broccoli",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-11",
+          "meal_id": "flat-sushi",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-12",
+          "meal_id": "roast-pork",
+          "cook_id": "morgan"
+        },
+        {
+          "on_date": "2026-08-13",
+          "meal_id": "burgers",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-14",
+          "meal_id": "sloppy-chicken",
+          "cook_id": "alex"
+        },
+        {
+          "on_date": "2026-08-15",
+          "meal_id": "roast-chicken",
+          "cook_id": "morgan"
+        },
+        {
+          "on_date": "2026-08-16",
+          "meal_id": "fried-rice",
+          "cook_id": "alex"
+        }
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "person_id": "jesse",
+      "meal_id": "burgers",
+      "on_date": "2026-08-09",
+      "level": "loved"
+    },
+    {
+      "person_id": "riley",
+      "meal_id": "fried-rice",
+      "on_date": "2026-08-06",
+      "level": "fine"
+    },
+    {
+      "person_id": "morgan",
+      "meal_id": "roast-chicken",
+      "on_date": "2026-08-03",
+      "level": "loved"
+    }
+  ],
+  "drift_cases": [
+    {
+      "case_id": "riley-tacos",
+      "person_id": "riley",
+      "meal_id": "tacos",
+      "went_off_around": "2026-06-01",
+      "note": "Tacos were a huge hit for years. Riley stopped liking them around June 2026 -- reported by Alex as 'about two or three months ago' on 2026-08-20, so the date is approximate to within a few weeks. Nobody noticed at the time; the rotation just quietly went from seven meals to six."
+    }
+  ]
+}
