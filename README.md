@@ -124,10 +124,20 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
    WOTCHA_RUNTIME_ARN= \
    WOTCHA_RUNTIME_ROLE_ARN= \
    WOTCHA_SCHEDULE_ENABLED=false \
+   WOTCHA_SMS_ORIGINATION_ARN= \
      make deploy
    ```
 
-   **`make deploy` refuses to run unless all three of `WOTCHA_RUNTIME_ARN`, `WOTCHA_RUNTIME_ROLE_ARN` and `WOTCHA_SCHEDULE_ENABLED` are stated** — empty is a fine answer, silence is not. Each one fails *quietly* when absent: no role ARN deletes the IAM grant that lets the runtime reach DynamoDB, no runtime ARN blanks the scheduler's target, and no schedule flag turns the weekly schedule off. A bare `make deploy` would un-deploy live work and exit zero.
+   **`make deploy` refuses to run unless all four of `WOTCHA_RUNTIME_ARN`, `WOTCHA_RUNTIME_ROLE_ARN`, `WOTCHA_SCHEDULE_ENABLED` and `WOTCHA_SMS_ORIGINATION_ARN` are stated** — empty is a fine answer, silence is not. Each one fails *quietly* when absent: no role ARN deletes the IAM grant that lets the runtime reach DynamoDB, no runtime ARN blanks the scheduler's target, no schedule flag turns the weekly schedule off, and no origination ARN revokes the runtime's permission to send SMS at all. A bare `make deploy` would un-deploy live work and exit zero.
+
+   The stack also creates the SMS spend alarm and its SNS topic, **unsubscribed**. Take the `AlarmsTopicArn` output and subscribe an address, then click the confirmation link — until you do, the alarm fires into nothing:
+
+   ```bash
+   aws sns subscribe --region ca-central-1 --topic-arn <AlarmsTopicArn> \
+     --protocol email --notification-endpoint <you@example.com>
+   ```
+
+   `make preflight` reports whether a confirmed subscriber exists, and whether the spend metric is publishing at all. The subscription is deliberately not in the CDK stack: an email address would land in the synthesized template and in the `make deploy` line, and this repo is public.
 
    `WOTCHA_RUNTIME_ARN` and `WOTCHA_RUNTIME_ROLE_ARN` are genuinely empty on this first deploy — the runtime does not exist until step 8, which is why you come back and re-run this. Note the `WebUrl` output — it's needed in step 8. This first deploy also can't grant the AgentCore Runtime's execution role access to DynamoDB/Secrets Manager yet, because that role doesn't exist until step 8 configures it — you'll re-run `make deploy` with `WOTCHA_RUNTIME_ROLE_ARN` set once it does; skip ahead and come back.
 
@@ -244,8 +254,11 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
    WOTCHA_RUNTIME_ARN=<runtime arn> \
    WOTCHA_RUNTIME_ROLE_ARN=<execution role arn> \
    WOTCHA_SCHEDULE_ENABLED=true \
+   WOTCHA_SMS_ORIGINATION_ARN=<the phone-number ARN> \
      make deploy
    ```
+
+   State the origination ARN here, non-empty. By this point SMS is live, and leaving it blank on this deploy revokes the grant you added above — enabling the weekly schedule and removing its ability to send, in one command.
 
 ## The SMS channel, and why Canada
 

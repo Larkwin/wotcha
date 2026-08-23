@@ -40,9 +40,12 @@ class WotchaStack(Stack):
         import os
 
         from aws_cdk import CfnOutput, Duration
+        from aws_cdk import aws_cloudwatch as cw
+        from aws_cdk import aws_cloudwatch_actions as cw_actions
         from aws_cdk import aws_iam as iam
         from aws_cdk import aws_lambda as lambda_
         from aws_cdk import aws_scheduler as scheduler
+        from aws_cdk import aws_sns as sns
 
         # No default. "demo" is the public sample household in
         # data/household.json, and defaulting to it points the runtime and the
@@ -173,4 +176,85 @@ class WotchaStack(Stack):
                     )
                 )
 
+        # --- the SMS spend ceiling ------------------------------------
+        #
+        # AWS sets the sandbox monthly SMS spend quota to $1.00 (USD), and in
+        # the sandbox that is the *maximum*, not a default -- a Service Quotas
+        # increase on TextMessageMonthlySpend is refused while the account is
+        # sandboxed. The only lever is production access, which also removes
+        # the verified-destination restriction that is currently this
+        # project's real safety net. So the ceiling stays, and the answer is
+        # to see it coming rather than to raise it.
+        #
+        # Hitting it is a silent failure with a twist: End User Messaging
+        # stops publishing messages within minutes, and
+        # NumberOfTextMessagePartsSent explicitly *excludes* messages blocked
+        # by spend limits -- so a blocked send leaves no trace in the delivery
+        # metrics at all. The send itself does raise (channel/sms.py does not
+        # swallow, notify.py has no except), so a scheduled run fails loudly
+        # once the ceiling is hit. This alarm exists to arrive before that.
+        #
+        # Constants, not environment knobs. $1.00 is an AWS-documented
+        # sandbox constant rather than an operator preference, and half of it
+        # is a full weekly send cycle of warning: the weekly text is capped at
+        # two GSM-7 segments per person (see notify.SMS_LENGTH_CAP), so one
+        # household's steady state is a small fraction of the budget and
+        # anything approaching $0.50 is a runaway, not growth. Raise both here
+        # if production access is ever granted.
+        sms_spend_ceiling_usd = 1.00
+        sms_spend_alarm_usd = sms_spend_ceiling_usd / 2
+
+        # Created always, subscribed by hand -- see docs/status.md. A CDK
+        # email subscription would put a personal address into the synthesized
+        # template and into the deploy command; this repo is public and
+        # `make deploy` invocations get pasted into runbooks. The cost of that
+        # choice is a topic with no subscriber, which is the same silent
+        # failure in a new costume -- so `preflight_sms.py spend` reports the
+        # confirmed subscription count, and `make preflight` runs it.
+        alarms = sns.Topic(
+            self, "Alarms",
+            topic_name="wotcha-alarms",
+            display_name="Wotcha",
+        )
+
+        cw.Alarm(
+            self, "SmsMonthlySpend",
+            alarm_name="wotcha-sms-monthly-spend",
+            metric=cw.Metric(
+                # Regional, unlike AWS/Billing -- the console walkthrough for
+                # "spending alarms" tells you to switch to us-east-1, which is
+                # true for AWS/Billing and wrong for this namespace. It belongs
+                # in the product region with everything else.
+                namespace="AWS/SMSVoice",
+                metric_name="TextMessageMonthlySpend",
+                # Month-to-date running total, so Maximum is the only
+                # statistic that means anything. Sum would add a cumulative
+                # gauge to itself.
+                statistic="Maximum",
+                period=Duration.hours(1),
+            ),
+            threshold=sms_spend_alarm_usd,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            # IGNORE, not MISSING. The metric only publishes around a send, so
+            # six of every seven days have no datapoints at all. Under MISSING
+            # an evaluation range of nothing goes to INSUFFICIENT_DATA, and an
+            # alarm that has gone red would fall back out of ALARM the next
+            # quiet day; IGNORE retains the current state instead, so a breach
+            # stays visible until the month rolls over and real data clears it.
+            # The residual gap -- a metric that never publishes at all leaves
+            # this sitting in INSUFFICIENT_DATA forever -- is not closable from
+            # here, and is exactly what the preflight check covers.
+            treat_missing_data=cw.TreatMissingData.IGNORE,
+            alarm_description=(
+                f"Wotcha SMS spend has passed ${sms_spend_alarm_usd:.2f} of the "
+                f"${sms_spend_ceiling_usd:.2f} monthly ceiling. At the ceiling AWS "
+                f"stops sending within minutes and the weekly text fails. In the "
+                f"sandbox the ceiling cannot be raised."
+            ),
+        ).add_alarm_action(cw_actions.SnsAction(alarms))
+
         CfnOutput(self, "WebUrl", value=url.url)
+        # Named so the subscription can be added by hand without hunting for
+        # it in the console.
+        CfnOutput(self, "AlarmsTopicArn", value=alarms.topic_arn)

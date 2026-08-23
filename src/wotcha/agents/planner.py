@@ -70,7 +70,11 @@ HOW TO WORK
 
 WHAT MAKES A GOOD WEEK
 - Do not repeat a meal the household ate in the last two weeks unless the fence
-  requires it.
+  requires it. Ate, not planned: every slot get_recent_weeks returns carries an
+  outcome, and only "made" means the meal was eaten. A night marked "swapped",
+  "takeout" or "skipped" did not happen as written, so that meal is still fresh
+  and may be planned again -- say so in the rationale when you do. A night still
+  marked "planned" has not happened yet.
 - Spread proteins out; avoid the same protein on consecutive nights.
 - Vary the character of the week -- a run of seven beige dinners is a bad week
   even when every rule passes.
