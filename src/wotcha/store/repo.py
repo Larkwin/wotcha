@@ -4,13 +4,13 @@ Pydantic handles serialisation via `model_dump(mode="json")`, which turns dates
 into ISO strings -- exactly what the sort keys already assume, so ranges over
 dates are lexicographic ranges over strings.
 """
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import boto3
 from boto3.dynamodb.conditions import Key
 
 from wotcha.domain.fence import Fence
-from wotcha.domain.models import Meal, MealStatus, Member, Signal, Week
+from wotcha.domain.models import Meal, MealStatus, Member, Outcome, Signal, Week
 from wotcha.store import keys
 
 
@@ -97,6 +97,44 @@ class Repository:
             for i in self._query_prefix(household_id, "SIGNAL#")
             if i["sk"] >= cutoff
         ]
+
+    # --- outcomes ---------------------------------------------------------
+    def put_outcome(self, household_id: str, outcome: Outcome) -> None:
+        """Record that a night went differently from the plan.
+
+        Written only when someone volunteers it -- nothing asks and nothing
+        confirms, so the absence of a row is the household saying the plan
+        held. A repeat delivery for the same night overwrites: one night, one
+        answer, always re-correctable.
+
+        Kept out of the Week item on purpose. `put_week` rewrites the item
+        whole, so two people correcting different nights would lose an update,
+        and a published week is history the seeder's guards already treat as
+        not-ours-to-rewrite.
+        """
+        self._table.put_item(Item={
+            **outcome.model_dump(mode="json"),
+            **keys.outcome_key(household_id, outcome.on_date),
+        })
+
+    def outcomes_for_week(
+        self, household_id: str, week_start: date
+    ) -> dict[date, Outcome]:
+        """Every delivered outcome for the seven nights from `week_start`,
+        keyed by date so a caller can look up a slot without scanning.
+
+        Range-queried rather than filtered in Python: the page renders one
+        week and should not pay for the whole history to do it.
+        """
+        end = week_start + timedelta(days=6)
+        items = self._table.query(
+            KeyConditionExpression=Key("pk").eq(keys.hh_pk(household_id))
+            & Key("sk").between(
+                f"OUTCOME#{week_start.isoformat()}", f"OUTCOME#{end.isoformat()}"
+            ),
+        ).get("Items", [])
+        out = [Outcome.model_validate(i) for i in items]
+        return {o.on_date: o for o in out}
 
     # --- escalations ------------------------------------------------------
     def put_escalation(self, household_id: str, record: dict) -> None:

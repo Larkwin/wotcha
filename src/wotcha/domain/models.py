@@ -62,10 +62,69 @@ class Suggestion(BaseModel):
 
 
 class SlotOutcome(StrEnum):
+    """What became of a planned night.
+
+    `PLANNED` is the stored default and means "nothing is known yet" -- it is
+    never a claim that the night did not happen. `MADE` is normally derived
+    rather than written; the three below it are the only states a household
+    ever delivers.
+    """
+
     PLANNED = "planned"
     MADE = "made"
     SWAPPED = "swapped"
     TAKEOUT = "takeout"
+    # Nobody cooked and it was not bought either: leftovers, everyone
+    # scattered, a lazy night. Distinct from TAKEOUT because it costs the
+    # takeout budget nothing.
+    SKIPPED = "skipped"
+
+
+class Substitute(StrEnum):
+    """What replaced a swapped meal.
+
+    Three states, not a nullable meal id, because "nobody said" and "it was
+    not one of ours" both carry no id and mean opposite things. Off-list
+    nights are only countable -- and they are the roster's own health metric,
+    the evidence behind a Curator proposing an audition -- while they remain
+    distinguishable from silence.
+    """
+
+    UNSPECIFIED = "unspecified"
+    KNOWN = "known"
+    OFF_LIST = "off_list"
+
+
+class Outcome(BaseModel):
+    """A night the household says went differently from the plan.
+
+    Only ever written when someone volunteers it. Nothing asks, nothing
+    confirms, and a night with no Outcome is resolved by `resolve_outcome`
+    rather than stored -- see wotcha.domain.outcomes.
+
+    Household-level, unlike `Signal`: what was eaten is a fact about the
+    house, not a personal opinion, so any member may deliver it. Blast radius
+    is one night and it is re-correctable.
+    """
+
+    on_date: date
+    outcome: SlotOutcome
+    substitute: Substitute = Substitute.UNSPECIFIED
+    substitute_meal_id: str | None = None
+
+    @model_validator(mode="after")
+    def _substitute_agrees_with_its_meal_id(self) -> "Outcome":
+        if self.substitute is Substitute.KNOWN and not self.substitute_meal_id:
+            raise ValueError(
+                "substitute='known' needs a substitute_meal_id: without one it "
+                "is 'unspecified' wearing a label that says otherwise"
+            )
+        if self.substitute is not Substitute.KNOWN and self.substitute_meal_id:
+            raise ValueError(
+                f"substitute={self.substitute.value!r} cannot name a meal; "
+                f"got substitute_meal_id={self.substitute_meal_id!r}"
+            )
+        return self
 
 
 class ClaimTag(StrEnum):

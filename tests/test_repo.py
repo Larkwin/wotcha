@@ -9,9 +9,12 @@ from wotcha.domain.models import (
     Meal,
     MealStatus,
     Member,
+    Outcome,
     Signal,
     SignalLevel,
     Slot,
+    SlotOutcome,
+    Substitute,
     Week,
 )
 from wotcha.store import keys
@@ -217,3 +220,43 @@ def test_eval_record_missing_timestamp_raises_clear_error(repo):
 def test_eval_record_missing_record_id_raises_clear_error(repo):
     with pytest.raises(ValueError, match="record_id"):
         repo.put_eval_record(HID, {"timestamp": "2026-08-24T10:00:00"})
+
+
+def test_an_outcome_round_trips(repo):
+    repo.put_outcome(HID, Outcome(on_date=date(2026, 8, 25),
+                                  outcome=SlotOutcome.TAKEOUT))
+    got = repo.outcomes_for_week(HID, date(2026, 8, 24))
+    assert list(got) == [date(2026, 8, 25)]
+    assert got[date(2026, 8, 25)].outcome is SlotOutcome.TAKEOUT
+
+
+def test_re_delivering_a_night_corrects_it_rather_than_duplicating(repo):
+    """Someone marks Tuesday takeout, then remembers it was actually a swap.
+    One night, one answer."""
+    repo.put_outcome(HID, Outcome(on_date=date(2026, 8, 25),
+                                  outcome=SlotOutcome.TAKEOUT))
+    repo.put_outcome(HID, Outcome(on_date=date(2026, 8, 25),
+                                  outcome=SlotOutcome.SWAPPED,
+                                  substitute=Substitute.KNOWN,
+                                  substitute_meal_id="chili"))
+    got = repo.outcomes_for_week(HID, date(2026, 8, 24))
+    assert len(got) == 1
+    assert got[date(2026, 8, 25)].outcome is SlotOutcome.SWAPPED
+    assert got[date(2026, 8, 25)].substitute_meal_id == "chili"
+
+
+def test_outcomes_are_scoped_to_their_week(repo):
+    """The page renders one week and must not pay for the whole history."""
+    for d in (date(2026, 8, 23), date(2026, 8, 25), date(2026, 8, 31)):
+        repo.put_outcome(HID, Outcome(on_date=d, outcome=SlotOutcome.SKIPPED))
+    got = repo.outcomes_for_week(HID, date(2026, 8, 24))
+    assert list(got) == [date(2026, 8, 25)]
+
+
+def test_outcomes_are_isolated_between_households(repo):
+    repo.put_outcome(HID, Outcome(on_date=date(2026, 8, 25),
+                                  outcome=SlotOutcome.SKIPPED))
+    repo.put_outcome("other-household", Outcome(on_date=date(2026, 8, 25),
+                                                outcome=SlotOutcome.TAKEOUT))
+    assert repo.outcomes_for_week(HID, date(2026, 8, 24))[
+        date(2026, 8, 25)].outcome is SlotOutcome.SKIPPED

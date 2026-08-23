@@ -36,3 +36,18 @@ def test_drift_case_key():
     assert keys.drift_case_key("demo", "maya-chili") == {
         "pk": "HH#demo", "sk": "DRIFTCASE#maya-chili"
     }
+
+
+def test_outcome_key_is_one_row_per_night():
+    """Keyed by date alone, not by person: what was eaten is a household fact,
+    so a second delivery corrects the night rather than adding a competing
+    opinion of it."""
+    assert keys.outcome_key("demo", date(2026, 8, 25)) == {
+        "pk": "HH#demo", "sk": "OUTCOME#2026-08-25"
+    }
+
+
+def test_outcome_keys_sort_by_date():
+    early = keys.outcome_key("demo", date(2026, 8, 2))["sk"]
+    late = keys.outcome_key("demo", date(2026, 8, 20))["sk"]
+    assert early < late

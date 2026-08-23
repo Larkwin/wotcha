@@ -12,6 +12,8 @@ from wotcha.domain.models import (
     Member,
     SignalLevel,
     Slot,
+    SlotOutcome,
+    Substitute,
     Week,
 )
 from wotcha.store import keys
@@ -379,3 +381,121 @@ def test_emoji_to_level_maps_correctly():
     assert EMOJI_TO_LEVEL["\U0001F44D"] == SignalLevel.FINE
     assert EMOJI_TO_LEVEL["\U0001F610"] == SignalLevel.MEH
     assert EMOJI_TO_LEVEL["\U0001F645"] == SignalLevel.REFUSED
+
+
+# --- delivered outcomes -------------------------------------------------
+# Nothing on this page asks how dinner went. The controls below sit inside a
+# collapsed <details>, so a night with nothing to say costs a reader nothing
+# and produces no row.
+
+def _outcome_body(on_date, outcome, **extra):
+    fields = {"on_date": on_date.isoformat(), "outcome": outcome, **extra}
+    return "&".join(f"{k}={v}" for k, v in fields.items())
+
+
+def test_the_page_never_asks_how_dinner_went(seeded):
+    """A question on every row is the nightly nag spec section 6 rejected.
+    The affordance is a disclosure the reader opens, not a prompt."""
+    token = make_token(HID, "maya", SECRET)
+    body = app.handler(req("GET", f"/w/{token}"), None)["body"]
+    assert "<details" in body
+    for asked in ("did you", "Did you", "how was", "How was", "confirm", "Confirm"):
+        assert asked not in body
+
+
+def test_delivering_takeout_records_it(seeded):
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    resp = app.handler(
+        req("POST", f"/o/{token}", _outcome_body(monday, "takeout")), None)
+    assert resp["statusCode"] == 303
+    got = seeded.outcomes_for_week(HID, monday)
+    assert got[monday].outcome is SlotOutcome.TAKEOUT
+
+
+def test_a_swap_records_immediately_without_a_substitute(seeded):
+    """The substitute is a follow-up, never a precondition. Walking away
+    after one tap must leave a valid swapped night."""
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    app.handler(req("POST", f"/o/{token}", _outcome_body(monday, "swapped")), None)
+    got = seeded.outcomes_for_week(HID, monday)[monday]
+    assert got.outcome is SlotOutcome.SWAPPED
+    assert got.substitute is Substitute.UNSPECIFIED
+
+
+def test_a_swap_can_name_a_household_meal(seeded):
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    app.handler(req("POST", f"/o/{token}",
+                    _outcome_body(monday, "swapped", substitute_meal_id="chili")), None)
+    got = seeded.outcomes_for_week(HID, monday)[monday]
+    assert got.substitute is Substitute.KNOWN
+    assert got.substitute_meal_id == "chili"
+
+
+def test_a_swap_can_be_marked_off_list(seeded):
+    """Countable on its own, without free text: how often the roster fails to
+    cover a night is the evidence behind a Curator proposing an audition."""
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    app.handler(req("POST", f"/o/{token}",
+                    _outcome_body(monday, "swapped", substitute="off_list")), None)
+    got = seeded.outcomes_for_week(HID, monday)[monday]
+    assert got.substitute is Substitute.OFF_LIST
+    assert got.substitute_meal_id is None
+
+
+def test_made_cannot_be_delivered(seeded):
+    """`made` is derived, never written. Accepting it would turn a presumption
+    into a stored fact nobody confirmed."""
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(
+        req("POST", f"/o/{token}", _outcome_body(_current_monday(), "made")), None)
+    assert resp["statusCode"] == 400
+    assert seeded.outcomes_for_week(HID, _current_monday()) == {}
+
+
+def test_an_unknown_substitute_meal_is_refused(seeded):
+    """Same untrusted-field reasoning as the reaction endpoint: anyone holding
+    a link could otherwise write arbitrary strings into the corpus M3 reads."""
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/o/{token}",
+                           _outcome_body(_current_monday(), "swapped",
+                                         substitute_meal_id="not-a-meal")), None)
+    assert resp["statusCode"] == 400
+    assert seeded.outcomes_for_week(HID, _current_monday()) == {}
+
+
+def test_an_unknown_outcome_is_refused(seeded):
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(
+        req("POST", f"/o/{token}", _outcome_body(_current_monday(), "brunched")), None)
+    assert resp["statusCode"] == 400
+
+
+def test_the_substitute_picker_omits_the_meal_it_replaced(seeded):
+    """Offering chili as the thing that replaced chili is nonsense, and it
+    would record a swap that says nothing changed."""
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    app.handler(req("POST", f"/o/{token}", _outcome_body(monday, "swapped")), None)
+    body = app.handler(req("GET", f"/w/{token}"), None)["body"]
+    assert 'value="chili">Chili</button>' not in body
+    assert 'value="off_list"' in body
+
+
+def test_a_future_night_is_not_asked_in_the_past_tense(seeded):
+    """The week is published ahead, so most nights on this page have not
+    happened. "not what happened?" against Friday reads as a system that has
+    lost track of what day it is."""
+    token = make_token(HID, "maya", SECRET)
+    monday = _current_monday()
+    seeded.put_week(Week(
+        household_id=HID, week_start=monday, published_at=datetime.now(UTC),
+        slots=[Slot(on_date=monday + timedelta(days=6), meal_id="chili",
+                    rationale="Weekend roast.")],
+    ))
+    body = app.handler(req("GET", f"/w/{token}"), None)["body"]
+    assert "not what happened?" not in body
+    assert "plans changed?" in body

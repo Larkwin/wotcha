@@ -15,7 +15,16 @@ import boto3
 
 from wotcha.config import settings
 from wotcha.dates import local_today, monday_of, next_monday
-from wotcha.domain.models import EMOJI_TO_LEVEL, Member, Signal, SignalLevel, Week
+from wotcha.domain.models import (
+    EMOJI_TO_LEVEL,
+    Member,
+    Outcome,
+    Signal,
+    SignalLevel,
+    SlotOutcome,
+    Substitute,
+    Week,
+)
 from wotcha.store.repo import Repository
 from wotcha.web.tokens import parse_token
 
@@ -68,7 +77,82 @@ def _week_to_show(repo: Repository, household_id: str, today: date) -> Week | No
     return coming if coming is not None else repo.get_week(household_id, monday_of(today))
 
 
-def _page(member: Member, week: Week, meals: dict, token: str) -> str:
+
+# The three states a household ever delivers. `made` is derived and `planned`
+# is the absence of news, so neither is offered here -- see
+# wotcha.domain.outcomes.
+DELIVERABLE = (
+    (SlotOutcome.SWAPPED, "cooked something else"),
+    (SlotOutcome.TAKEOUT, "takeout or ate out"),
+    (SlotOutcome.SKIPPED, "no real dinner"),
+)
+
+
+def _correction_html(slot, meals: dict, token: str, delivered,
+                     today: date) -> str:
+    """A collapsed disclosure, never a question.
+
+    Section 6 rejected a nightly "rate your dinner" ping as a nag, and the
+    same objection kills a row of "did you make this?" buttons on seven
+    nights. `<details>` is native HTML -- this page has no JavaScript and is
+    not getting any -- so the affordance costs a reader nothing until they
+    have something to say.
+
+    Offered on every night, not only past ones. Knowing on Monday that Friday
+    is a night out is ordinary, and `resolve_outcome` honours a correction
+    whatever the date; refusing it here would make the page argue with the
+    household.
+    """
+    action = f'/o/{html.escape(token)}'
+    on = slot.on_date.isoformat()
+    if delivered is None or delivered.outcome is not SlotOutcome.SWAPPED:
+        opts = "".join(
+            f'<button name="outcome" value="{o.value}">{label}</button>'
+            for o, label in DELIVERABLE
+        )
+        # Most nights on a published week have not happened yet. Asking
+        # "not what happened?" about Friday reads as a system that has lost
+        # track of what day it is -- and plans genuinely change in advance,
+        # which is why resolve_outcome honours a future correction at all.
+        summary = "not what happened?" if slot.on_date < today else "plans changed?"
+        if delivered is not None:
+            summary = f"{delivered.outcome.value} \u2014 change?"
+        return f"""
+          <details class="fix">
+            <summary>{summary}</summary>
+            <form method="post" action="{action}">
+              <input type="hidden" name="on_date" value="{on}">
+              {opts}
+            </form>
+          </details>"""
+
+    # Swapped and recorded. The substitute is a follow-up that never blocked
+    # the swap, so this is offered after the fact and stays optional -- an
+    # off-list night is worth counting even when nobody names what it was.
+    if delivered.substitute is not Substitute.UNSPECIFIED:
+        named = (meals[delivered.substitute_meal_id].name
+                 if delivered.substitute_meal_id in meals else "something else")
+        return f'<div class="fix">swapped \u2014 {html.escape(named)}</div>'
+    # The replaced meal is not a candidate for having replaced itself: it
+    # would record a swap asserting nothing changed.
+    picker = "".join(
+        f'<button name="substitute_meal_id" value="{html.escape(m.meal_id)}">'
+        f'{html.escape(m.name)}</button>'
+        for m in meals.values() if m.meal_id != slot.meal_id
+    )
+    return f"""
+          <details class="fix">
+            <summary>swapped \u2014 what did you have?</summary>
+            <form method="post" action="{action}">
+              <input type="hidden" name="on_date" value="{on}">
+              {picker}
+              <button name="substitute" value="off_list">something else</button>
+            </form>
+          </details>"""
+
+
+def _page(member: Member, week: Week, meals: dict, token: str,
+          outcomes: dict, today: date) -> str:
     # The rationale is shown only to cooks -- everyone else sees the meal and
     # can react, but not the reasoning behind it (household owner's call).
     show_rationale = member.is_cook
@@ -94,6 +178,7 @@ def _page(member: Member, week: Week, meals: dict, token: str) -> str:
             <input type="hidden" name="meal_id" value="{html.escape(slot.meal_id)}">
             {buttons}
           </form>
+          {_correction_html(slot, meals, token, outcomes.get(slot.on_date), today)}
         </li>""")
     return f"""<!doctype html>
 <html lang="en"><head>
@@ -107,6 +192,9 @@ def _page(member: Member, week: Week, meals: dict, token: str) -> str:
   .sub {{ opacity: .7; margin: 0 0 1.5rem; }}
   ul {{ list-style: none; padding: 0; }}
   li {{ padding: 1rem 0; border-top: 1px solid rgba(128,128,128,.3); }}
+  .fix {{ font-size: .8rem; opacity: .65; margin-top: .35rem; }}
+  .fix summary {{ cursor: pointer; }}
+  .fix form {{ margin-top: .35rem; }}
   .day {{ font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
           opacity: .6; }}
   .meal {{ font-size: 1.15rem; font-weight: 600; }}
@@ -173,7 +261,9 @@ def handler(event: dict, _context) -> dict:
         if week is None:
             return _resp(200, "<p>No week planned yet. Check back soon.</p>")
         meals = {m.meal_id: m for m in repo.list_meals(household_id)}
-        return _resp(200, _page(member, week, meals, token))
+        outcomes = repo.outcomes_for_week(household_id, week.week_start)
+        return _resp(200, _page(member, week, meals, token, outcomes,
+                                local_today()))
 
     if route == "r" and method == "POST":
         try:
@@ -220,6 +310,64 @@ def handler(event: dict, _context) -> dict:
             level=level,
         ))
         # Redirect back so a refresh doesn't resubmit.
+        return {"statusCode": 303, "headers": {"location": f"/w/{token}"}, "body": ""}
+
+    if route == "o" and method == "POST":
+        try:
+            body = _request_body(event)
+        except _BadBody:
+            return _resp(400, "Malformed request body.", "text/plain")
+        form = parse_qs(body)
+        try:
+            on_date = date.fromisoformat((form.get("on_date") or [""])[0])
+        except ValueError:
+            return _resp(400, "Missing or invalid date.", "text/plain")
+
+        known = repo.outcomes_for_week(household_id, monday_of(on_date)).get(on_date)
+        meal_ids = {m.meal_id for m in repo.list_meals(household_id)}
+
+        # A second POST for a night already swapped is the substitute
+        # follow-up, which never blocked the swap and must not silently
+        # rewrite what it replaced.
+        sub_raw = (form.get("substitute") or [""])[0]
+        sub_meal = (form.get("substitute_meal_id") or [""])[0]
+        outcome_raw = (form.get("outcome") or [""])[0]
+
+        if not outcome_raw and known is not None:
+            outcome = known.outcome
+        else:
+            try:
+                outcome = SlotOutcome(outcome_raw)
+            except ValueError:
+                return _resp(400, "Unknown outcome.", "text/plain")
+        # `made` is derived and `planned` is the absence of news. Accepting
+        # either would turn a presumption nobody confirmed into a stored fact
+        # -- the confidently-wrong field the Planner already refuses to write
+        # for cook_id.
+        if outcome in (SlotOutcome.MADE, SlotOutcome.PLANNED):
+            return _resp(400, "That outcome is derived, not delivered.", "text/plain")
+
+        # Untrusted, exactly like `meal_id` on the reaction endpoint: it flows
+        # into the corpus the Curator reads. Checked against every household
+        # meal, not the Safe List -- swapping to a retired meal is precisely
+        # the signal worth having.
+        if sub_meal:
+            if sub_meal not in meal_ids:
+                return _resp(400, "Unknown meal.", "text/plain")
+            substitute, substitute_meal_id = Substitute.KNOWN, sub_meal
+        elif sub_raw == Substitute.OFF_LIST.value:
+            substitute, substitute_meal_id = Substitute.OFF_LIST, None
+        elif sub_raw:
+            return _resp(400, "Unknown substitute.", "text/plain")
+        else:
+            substitute, substitute_meal_id = Substitute.UNSPECIFIED, None
+
+        repo.put_outcome(household_id, Outcome(
+            on_date=on_date,
+            outcome=outcome,
+            substitute=substitute,
+            substitute_meal_id=substitute_meal_id,
+        ))
         return {"statusCode": 303, "headers": {"location": f"/w/{token}"}, "body": ""}
 
     return _resp(404, "Not found", "text/plain")

@@ -36,6 +36,17 @@ def signal_key(
     }
 
 
+def outcome_key(household_id: str, on_date: date) -> dict[str, str]:
+    """One row per night, keyed by date alone.
+
+    Deliberately not keyed by person, unlike `signal_key`: what the household
+    ate is a fact about the house, not an opinion held by one member, so a
+    second delivery corrects the night instead of adding a competing account
+    of it. Date-prefixed so a week is a range query.
+    """
+    return {"pk": hh_pk(household_id), "sk": f"OUTCOME#{on_date.isoformat()}"}
+
+
 def eval_key(household_id: str, iso_timestamp: str, unique: str) -> dict[str, str]:
     return {"pk": hh_pk(household_id), "sk": f"EVAL#{iso_timestamp}#{unique}"}
 
