@@ -66,6 +66,22 @@ Kids were at camp during M1, so only Alex is reachable. When they are back:
 3. Verify each handset with `scripts/preflight_sms.py` — the SMS sandbox only
    delivers to verified destinations, up to 10
 
+4. **Send the first family-wide week on Monday or later, not the same day.**
+
+   `plan_and_notify` plans `next_monday`, and `notify_week` returns 0 without
+   sending when the target week already carries a `notified_at`. Until Monday
+   the target is `WEEK#2026-08-24`, which was notified on 2026-08-20 -- so a
+   kickoff before then texts **nobody**, newly verified handsets included, and
+   reports `{"notified": 0}`. That reads as a broken deploy and is the guard
+   working exactly as designed.
+
+   From Monday the target rolls to `WEEK#2026-08-31`: published, never
+   notified, so it sends to everyone reachable. Verify handsets whenever they
+   are available; do the send afterwards.
+
+   The runtime is on `WOTCHA_CHANNEL=sms` with a live origination id, so
+   every `plan_and_notify` reaches real phones. There is no dry run from here.
+
 That sandbox restriction is also the thing that made an agent's stray deploy
 harmless in August. **It goes away when you request production access** — which
 is the same moment the family's numbers go in. Re-read the channel safety rules
