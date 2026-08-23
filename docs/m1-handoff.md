@@ -1,6 +1,8 @@
 # M1 handoff — state, runbook, and what is deliberately unfinished
 
-Written 2026-08-20, at the end of M1. Everything here is either operational
+Written 2026-08-20, at the end of M1. **`docs/status.md` is the current
+ledger** of what is done and what is next; this file remains authoritative for
+the M1 runbook and the reasoning behind decisions made at the time. Everything here is either operational
 knowledge you will need, or a decision someone made on purpose that a future
 reader would otherwise rediscover as a bug.
 
