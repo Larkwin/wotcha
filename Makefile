@@ -80,7 +80,8 @@ build-lambda: $(VENV)
 # would hardcode one account into the repo and break any other clone, and
 # the third is operational state (is the schedule live right now?) rather
 # than source. Deployment state belongs in the deploy command, not in git.
-DEPLOY_VARS := WOTCHA_RUNTIME_ARN WOTCHA_RUNTIME_ROLE_ARN WOTCHA_SCHEDULE_ENABLED
+DEPLOY_VARS := WOTCHA_RUNTIME_ARN WOTCHA_RUNTIME_ROLE_ARN WOTCHA_SCHEDULE_ENABLED \
+               WOTCHA_SMS_ORIGINATION_ARN
 DEPLOY_UNSET := $(strip $(foreach v,$(DEPLOY_VARS),\
 	$(if $(filter undefined,$(origin $(v))),$(v))))
 
@@ -92,9 +93,11 @@ check-deploy-env:
 		echo "  WOTCHA_RUNTIME_ROLE_ARN  unset -> deletes the runtime IAM grant"; \
 		echo "  WOTCHA_RUNTIME_ARN       unset -> blanks the scheduler target"; \
 		echo "  WOTCHA_SCHEDULE_ENABLED  unset -> turns the weekly schedule off"; \
+		echo "  WOTCHA_SMS_ORIGINATION_ARN unset -> revokes the runtime's SMS grant"; \
 		echo ""; \
-		echo "State all three. Empty is a legitimate answer, silence is not:"; \
-		echo "  WOTCHA_RUNTIME_ARN= WOTCHA_RUNTIME_ROLE_ARN= WOTCHA_SCHEDULE_ENABLED=false make deploy"; \
+		echo "State all four. Empty is a legitimate answer, silence is not:"; \
+		echo "  WOTCHA_RUNTIME_ARN= WOTCHA_RUNTIME_ROLE_ARN= \\"; \
+		echo "  WOTCHA_SCHEDULE_ENABLED=false WOTCHA_SMS_ORIGINATION_ARN= make deploy"; \
 		exit 1; \
 	fi
 	@if [ "$(WOTCHA_HOUSEHOLD_ID)" = "$(WOTCHA_HOUSEHOLD_ID_DEFAULT)" ]; then \
