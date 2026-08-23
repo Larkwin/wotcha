@@ -134,8 +134,13 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
 7. **Seed the household** (real meals, real preferences, backfilled history — see the note below):
 
    ```bash
-   .venv/bin/python scripts/seed_household.py
+   cp data/household.json data/household.local.json   # then edit: real names, real ids
+   .venv/bin/python scripts/seed_household.py --file data/household.local.json --new-household
    ```
+
+   **`--file` is required and there is no default.** `data/household.json` is the public sample household; the household you actually live in belongs in `data/household.local.json`, which is gitignored. Defaulting to either would silently choose a tenant.
+
+   `--new-household` is needed only here, on the first seed. Afterwards the seeder refuses to create a household that has nothing stored under it — the failure that guard exists for is a `--file` naming the wrong household, which would otherwise write a whole parallel tenant and report success while the real one sat untouched.
 
 8. **Configure and deploy the AgentCore Runtime container**, once per machine:
 
@@ -179,18 +184,18 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
 
 9. **Give the family reachable phone numbers, and verify each handset.** This step is not optional and has no default: **no member has a `phone` field until you add one.** Skip it and step 10 comes back `{"notified": 0, "reason": "no_reachable_members"}` — which looks like a bug and is actually a missing step.
 
-   a. Put each person's number in `data/household.json` in **E.164** form. The `"phone": null` fields are there to be replaced:
+   a. Put each person's number in `data/household.local.json` in **E.164** form. The `"phone": null` fields are there to be replaced:
 
       ```json
       { "person_id": "alex", "name": "Alex", "phone": "+15195550123", "is_cook": true }
       ```
 
-      `+15195550123` is a placeholder. Use the household's real numbers — and think before committing them if this repo is ever public.
+      `+15195550123` is a placeholder. Use the household's real numbers. They stay out of git because `data/household.local.json` is gitignored — **this repo is public**, so never move them into `data/household.json`.
 
    b. Re-seed, so the numbers reach the table:
 
       ```bash
-      .venv/bin/python scripts/seed_household.py
+      .venv/bin/python scripts/seed_household.py --file data/household.local.json
       ```
 
       `seed_household.py` refuses to change or erase a phone number already in the table, and refuses to overwrite a week the household actually lived. Both refusals name the offending record. `--force` overrides them and destroys hand-entered history — type it deliberately, never habitually.
@@ -258,7 +263,9 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
 
 ## A note on the backfilled history
 
-`data/household.json` includes roughly six months of the author's real household dinner history, entered by recall rather than logged in real time, along with the current real Safe List and a small number of drift cases (meals a specific person is remembered to have gone off, and roughly when) labelled as ground truth for the M3 Curator's eventual scorecard. **This history is reconstructed from memory, not measured contemporaneously, and is disclosed here plainly as such.** The label quality is what it is — a parent's honest recollection of "we stopped making tacos around June" — not a logged fact. From this deployment onward, every week is real and logged as it happens; the backfill exists only to give the Curator something to reason about before three weeks of live data exists.
+`data/household.local.json` — the untracked household file, not the sample one committed here — includes the author's real household dinner history, entered by recall rather than logged in real time, along with the current real Safe List and a small number of drift cases (meals a specific person is remembered to have gone off, and roughly when) labelled as ground truth for the M3 Curator's eventual scorecard. **This history is reconstructed from memory, not measured contemporaneously, and is disclosed here plainly as such.** The label quality is what it is — a parent's honest recollection of "we stopped making tacos around June" — not a logged fact. From this deployment onward, every week is real and logged as it happens; the backfill exists only to give the Curator something to reason about before three weeks of live data exists.
+
+The `data/household.json` committed here is a **pseudonymous sample household** with the same shape and a short history. It is what the tests and a fresh clone run against, and it is the seed for the demo tenant. No real name, number, or account identifier appears in this repository.
 
 ## A note on the deployment tooling
 

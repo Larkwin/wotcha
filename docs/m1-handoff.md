@@ -57,9 +57,12 @@ WOTCHA_SCHEDULE_ENABLED=true WOTCHA_RUNTIME_ARN=<arn> WOTCHA_RUNTIME_ROLE_ARN=<a
 
 Kids were at camp during M1, so only Alex is reachable. When they are back:
 
-1. Add E.164 `phone` fields to `data/household.json`
-2. Re-seed (the loader validates before writing and refuses to clobber a
-   published week or change a stored number without `--force`)
+1. Add E.164 `phone` fields to `data/household.local.json` (untracked; the
+   committed `data/household.json` is the public sample household)
+2. Re-seed with `--file data/household.local.json` (the loader validates
+   before writing, refuses to clobber a published week or change a stored
+   number without `--force`, and refuses outright to create a household that
+   does not already exist)
 3. Verify each handset with `scripts/preflight_sms.py` — the SMS sandbox only
    delivers to verified destinations, up to 10
 

@@ -138,7 +138,8 @@ Canadian long code should provision quickly — **request it first.**
       could not settle.
 - [ ] Verify the remaining family handsets (mechanical now -- the risk is retired).
       The procedure is README step 9, which is authoritative: numbers into
-      `data/household.json`, re-seed, then `preflight_sms.py verify`/`confirm`
+      `data/household.local.json`, re-seed with `--file`, then
+      `preflight_sms.py verify`/`confirm`
       per handset.
 - [x] ~~Verify whether Strands' `BedrockModel` reaches `deepseek.v3.2` and
       `qwen.qwen3-32b-v1:0` in us-east-1~~ — **YES, confirmed 2026-08-22.** Both
