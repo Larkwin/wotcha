@@ -52,7 +52,8 @@ Then enable the weekly schedule, and **invoke the scheduler Lambda once by hand*
 the schedule fires, the Lambda is denied, nobody is texted, no alarm.
 
 ```bash
-WOTCHA_SCHEDULE_ENABLED=true WOTCHA_RUNTIME_ARN=<arn> WOTCHA_RUNTIME_ROLE_ARN=<arn> make deploy
+WOTCHA_SCHEDULE_ENABLED=true WOTCHA_RUNTIME_ARN=<arn> WOTCHA_RUNTIME_ROLE_ARN=<arn> \
+  WOTCHA_SMS_ORIGINATION_ARN=<the phone-number ARN> make deploy
 ```
 
 ## Adding the rest of the family

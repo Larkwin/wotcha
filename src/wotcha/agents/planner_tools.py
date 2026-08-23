@@ -21,6 +21,7 @@ from wotcha.agents.context import get_context
 from wotcha.dates import local_today
 from wotcha.domain.fence import validate_plan
 from wotcha.domain.models import MealStatus, Slot, Week
+from wotcha.domain.outcomes import resolve_outcome
 
 
 def _build_week(week_start: str, slots: list[dict]) -> Week:
@@ -97,10 +98,41 @@ def get_safe_list() -> list[dict]:
 @tool
 def get_recent_weeks(limit: int = 4) -> list[dict]:
     """Return recent weeks, newest first, so the plan can avoid repeating what
-    the household has just eaten."""
+    the household has just eaten.
+
+    Each slot's `outcome` says what became of that night:
+      - `made` -- the meal was eaten. This is what a repeat means.
+      - `swapped`, `takeout`, `skipped` -- the planned meal was NOT eaten, so
+        it does not count as a repeat and is still fresh to plan.
+      - `planned` -- the night has not happened yet.
+
+    The stored value is not the answer. A live week is written with every slot
+    `planned` and nothing rewrites it once the night passes, so history read
+    raw says the household ate nothing all week. `resolve_outcome` supplies
+    the presumption -- a past night nobody corrected went as planned -- and a
+    delivered correction overrides it. Resolved into the returned dict rather
+    than onto the model: outcomes.py's contract is that the presumption is
+    computed at read time and never written, and this is a read.
+    """
     ctx = get_context()
-    return [w.model_dump(mode="json")
-            for w in ctx.repo.recent_weeks(ctx.household_id, limit=limit)]
+    today = local_today()
+    weeks = ctx.repo.recent_weeks(ctx.household_id, limit=limit)
+    out = []
+    for week in weeks:
+        # One narrow query per week rather than one range across all of them:
+        # recent_weeks takes the newest by sort key and those can have gaps,
+        # so a single span would fetch nights belonging to no week here.
+        corrections = ctx.repo.outcomes_for_week(ctx.household_id, week.week_start)
+        dumped = week.model_dump(mode="json")
+        for slot, row in zip(week.slots, dumped["slots"], strict=True):
+            row["outcome"] = resolve_outcome(
+                on_date=slot.on_date,
+                stored=slot.outcome,
+                correction=corrections.get(slot.on_date),
+                today=today,
+            ).value
+        out.append(dumped)
+    return out
 
 
 @tool

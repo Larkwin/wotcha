@@ -19,9 +19,14 @@ lint:
 # exits 1, so this target used to fail every single time it was run. `list`
 # is the read-only check -- origination identities and verified destinations
 # -- and sends nothing.
+# `spend` is here rather than left to be remembered: the spend alarm's topic
+# is subscribed by hand (infra/stack.py says why), so the one thing that can
+# silently make the alarm useless -- nobody confirmed on the topic -- is only
+# visible if something asks. This is the thing that already gets run.
 preflight:
 	$(PY) scripts/preflight_bedrock.py
 	$(PY) scripts/preflight_sms.py list
+	$(PY) scripts/preflight_sms.py spend
 
 # Creates infra/.venv (gitignored, not created by `install`) and installs the
 # CDK CLI's Python dependencies into it. infra/cdk.json execs

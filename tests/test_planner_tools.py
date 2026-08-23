@@ -7,7 +7,16 @@ from moto import mock_aws
 from wotcha.agents import context
 from wotcha.agents import planner_tools as pt
 from wotcha.domain.fence import Fence, FixedSlotRule, TakeoutBudgetRule
-from wotcha.domain.models import Meal, MealStatus, Signal, SignalLevel
+from wotcha.domain.models import (
+    Meal,
+    MealStatus,
+    Outcome,
+    Signal,
+    SignalLevel,
+    Slot,
+    SlotOutcome,
+    Week,
+)
 from wotcha.store.repo import Repository
 
 HID = "demo"
@@ -331,3 +340,101 @@ def test_publish_handles_a_malformed_input_without_crashing(repo):
     records = repo._query_prefix(HID, "EVAL#")
     assert len(records) == 1
     assert records[0]["kind"] == "publish_refusal"
+
+
+# --- history the Planner reads ------------------------------------------
+#
+# The other half of outcome capture. A live week is stored with every slot
+# `planned` and nothing ever rewrites it, so history read straight off the
+# row says the household ate nothing -- and a corrected night reads as eaten
+# anyway. These pin the three precedence branches of resolve_outcome as the
+# Planner actually sees them.
+
+HISTORY_MONDAY = date(2026, 8, 10)
+
+
+def _put_history(repo, *, stored=SlotOutcome.PLANNED, monday=HISTORY_MONDAY):
+    """One week of seven chili nights, all carrying the same stored outcome."""
+    repo.put_week(Week(
+        household_id=HID, week_start=monday,
+        published_at=datetime.now(UTC),
+        slots=[Slot(on_date=monday + timedelta(days=i), meal_id="chili",
+                    rationale="because", outcome=stored)
+               for i in range(7)],
+    ))
+
+
+def _outcomes(repo, monkeypatch, today: date) -> list[str]:
+    monkeypatch.setattr(pt, "local_today", lambda: today)
+    weeks = pt.get_recent_weeks()
+    return [s["outcome"] for s in weeks[0]["slots"]]
+
+
+def test_a_finished_night_nobody_corrected_reads_as_made(repo, monkeypatch):
+    """The stored value stays `planned` forever. Without resolution the
+    Planner reads a whole eaten week as never having happened, and cheerfully
+    repeats every meal in it."""
+    _put_history(repo)
+    assert _outcomes(repo, monkeypatch, HISTORY_MONDAY + timedelta(days=7)) == \
+        ["made"] * 7
+
+
+def test_a_delivered_correction_beats_the_presumption(repo, monkeypatch):
+    """The whole point of outcome capture: a swapped night was not eaten, so
+    that meal is still fresh."""
+    _put_history(repo)
+    repo.put_outcome(HID, Outcome(on_date=HISTORY_MONDAY,
+                                  outcome=SlotOutcome.TAKEOUT))
+    got = _outcomes(repo, monkeypatch, HISTORY_MONDAY + timedelta(days=7))
+    assert got[0] == "takeout"
+    assert got[1:] == ["made"] * 6
+
+
+def test_a_correction_dated_in_the_future_still_wins(repo, monkeypatch):
+    """Knowing on Monday that Friday is a night out is ordinary. This is what
+    separates resolve_outcome from a plain date comparison."""
+    _put_history(repo)
+    friday = HISTORY_MONDAY + timedelta(days=4)
+    repo.put_outcome(HID, Outcome(on_date=friday, outcome=SlotOutcome.SKIPPED))
+    got = _outcomes(repo, monkeypatch, HISTORY_MONDAY)
+    assert got[4] == "skipped"
+    assert got[0] == "planned"  # today itself is not yet made
+
+
+def test_a_live_week_stays_planned_from_today_onward(repo, monkeypatch):
+    _put_history(repo)
+    got = _outcomes(repo, monkeypatch, HISTORY_MONDAY + timedelta(days=3))
+    assert got == ["made"] * 3 + ["planned"] * 4
+
+
+def test_a_stored_outcome_from_seeded_backfill_is_never_recomputed(repo, monkeypatch):
+    """Seeded history carries MADE already, and drift cases will carry more
+    than that. Recomputing it would replace a recorded fact with a guess."""
+    _put_history(repo, stored=SlotOutcome.SWAPPED)
+    assert _outcomes(repo, monkeypatch, HISTORY_MONDAY + timedelta(days=7)) == \
+        ["swapped"] * 7
+
+
+def test_resolution_is_not_written_back_to_the_week(repo, monkeypatch):
+    """outcomes.py's contract is that the presumption is computed at read time
+    and never stored. A tool that resolved onto the model and then anything
+    calling put_week would quietly turn the guess into a fact."""
+    _put_history(repo)
+    _outcomes(repo, monkeypatch, HISTORY_MONDAY + timedelta(days=7))
+    stored = repo.get_week(HID, HISTORY_MONDAY)
+    assert [s.outcome for s in stored.slots] == [SlotOutcome.PLANNED] * 7
+
+
+def test_each_week_reads_its_own_corrections(repo, monkeypatch):
+    """Two weeks, one correction. Resolving per week rather than over one span
+    is what keeps a neighbouring week's night out of this week's answer."""
+    earlier = HISTORY_MONDAY - timedelta(days=7)
+    _put_history(repo, monday=earlier)
+    _put_history(repo)
+    repo.put_outcome(HID, Outcome(on_date=earlier, outcome=SlotOutcome.SKIPPED))
+    monkeypatch.setattr(pt, "local_today",
+                        lambda: HISTORY_MONDAY + timedelta(days=7))
+    weeks = pt.get_recent_weeks()
+    assert weeks[0]["week_start"] == HISTORY_MONDAY.isoformat()  # newest first
+    assert [s["outcome"] for s in weeks[0]["slots"]] == ["made"] * 7
+    assert weeks[1]["slots"][0]["outcome"] == "skipped"

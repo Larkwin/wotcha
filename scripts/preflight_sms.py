@@ -10,12 +10,14 @@ Sending requires WOTCHA_SMS_ORIGINATION_ID (the PhoneNumberId to send from);
 
 Usage:
   python scripts/preflight_sms.py list
+  python scripts/preflight_sms.py spend
   python scripts/preflight_sms.py verify +15195550123
   python scripts/preflight_sms.py confirm +15195550123 123456
   python scripts/preflight_sms.py send +15195550123
 """
 import os
 import sys
+from datetime import UTC, datetime
 
 import boto3
 from botocore.exceptions import ClientError
@@ -47,8 +49,106 @@ def origination_id() -> str:
         ) from None
 
 
+# The sandbox ceiling, and the alarm threshold infra/stack.py sets at half
+# of it. Duplicated rather than imported: stack.py runs under infra/.venv
+# with the CDK installed and this script does not, so there is no import path
+# between them. If one changes, change both -- and the test below is what
+# makes a drift visible.
+SPEND_CEILING_USD = 1.00
+SPEND_ALARM_USD = SPEND_CEILING_USD / 2
+ALARM_NAME = "wotcha-sms-monthly-spend"
+ALARMS_TOPIC = "wotcha-alarms"
+
+
 def client():
     return boto3.client("pinpoint-sms-voice-v2", region_name=REGION)
+
+
+def read_spend(datapoints: list[dict]) -> tuple[float | None, str]:
+    """Interpret the TextMessageMonthlySpend datapoints. Pure, so the
+    judgement can be tested without touching AWS.
+
+    No datapoints is the case worth being careful about, and it is NOT the
+    same as zero spend. The metric requires the service-linked role to exist
+    and does not publish at all until at least one message has been sent, so
+    silence means either "nothing sent this month" or "this account is not
+    publishing the metric and the alarm can never fire" -- and those need
+    opposite responses. Say so rather than printing $0.00 and looking fine.
+    """
+    if not datapoints:
+        return None, (
+            "no datapoints. That is NOT $0.00 spent -- the metric needs the "
+            "service-linked role and does not publish until at least one "
+            "message has been sent. An alarm on a metric nobody publishes "
+            "sits in INSUFFICIENT_DATA forever and never fires."
+        )
+    spent = max(d["Maximum"] for d in datapoints)
+    if spent >= SPEND_CEILING_USD:
+        return spent, (
+            f"AT THE CEILING (${SPEND_CEILING_USD:.2f}). Sends are being "
+            f"stopped. In the sandbox this cannot be raised -- only "
+            f"production access lifts it, and that also drops the "
+            f"verified-destination restriction."
+        )
+    if spent >= SPEND_ALARM_USD:
+        return spent, (
+            f"past the ${SPEND_ALARM_USD:.2f} alarm threshold, "
+            f"${SPEND_CEILING_USD - spent:.2f} left this month."
+        )
+    return spent, f"under the ${SPEND_ALARM_USD:.2f} alarm threshold."
+
+
+def cmd_spend() -> None:
+    """Answer both halves of "is the spend alarm real": is the metric being
+    published, and would the alarm reach a person.
+
+    The second half exists because the topic is created by CDK and subscribed
+    by hand. A topic with no confirmed subscriber is an alarm that fires into
+    nothing -- the same silent failure the alarm was built to close, one level
+    up. A *pending* subscription counts as nobody: an unconfirmed email
+    address receives no notifications.
+    """
+    cw = boto3.client("cloudwatch", region_name=REGION)
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    stats = cw.get_metric_statistics(
+        Namespace="AWS/SMSVoice",
+        MetricName="TextMessageMonthlySpend",
+        StartTime=month_start,
+        EndTime=now,
+        Period=3600,
+        Statistics=["Maximum"],
+    )["Datapoints"]
+    spent, note = read_spend(stats)
+    shown = "unknown" if spent is None else f"${spent:.2f}"
+    print(f"SMS spend this month: {shown} -- {note}")
+
+    alarms = cw.describe_alarms(AlarmNames=[ALARM_NAME])["MetricAlarms"]
+    if not alarms:
+        print(f"Alarm {ALARM_NAME!r}: MISSING. Run `make deploy`.")
+    else:
+        state = alarms[0]["StateValue"]
+        print(f"Alarm {ALARM_NAME!r}: {state}")
+        if state == "INSUFFICIENT_DATA":
+            print("  INSUFFICIENT_DATA is expected until the first send of a "
+                  "month, and permanent if the metric never publishes.")
+
+    sns = boto3.client("sns", region_name=REGION)
+    topic = next((t["TopicArn"] for t in sns.list_topics()["Topics"]
+                  if t["TopicArn"].rsplit(":", 1)[-1] == ALARMS_TOPIC), None)
+    if topic is None:
+        print(f"Topic {ALARMS_TOPIC!r}: MISSING. Run `make deploy`.")
+        return
+    subs = sns.list_subscriptions_by_topic(TopicArn=topic)["Subscriptions"]
+    confirmed = [s for s in subs if s["SubscriptionArn"].startswith("arn:")]
+    if not confirmed:
+        print(f"Topic {ALARMS_TOPIC!r}: NO CONFIRMED SUBSCRIBER -- the alarm "
+              f"fires into nothing. Subscribe an address and click the "
+              f"confirmation link:")
+        print(f"  aws sns subscribe --region {REGION} --topic-arn {topic} \\")
+        print("    --protocol email --notification-endpoint <you@example.com>")
+    else:
+        print(f"Topic {ALARMS_TOPIC!r}: {len(confirmed)} confirmed subscriber(s).")
 
 
 def cmd_list() -> None:
@@ -97,7 +197,7 @@ def cmd_send(number: str) -> None:
     print("Confirm on the actual handset before recording success.")
 
 
-COMMANDS = {"list": cmd_list, "verify": cmd_verify,
+COMMANDS = {"list": cmd_list, "spend": cmd_spend, "verify": cmd_verify,
             "confirm": cmd_confirm, "send": cmd_send}
 
 
