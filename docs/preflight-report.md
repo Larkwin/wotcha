@@ -140,7 +140,21 @@ Canadian long code should provision quickly — **request it first.**
       The procedure is README step 9, which is authoritative: numbers into
       `data/household.json`, re-seed, then `preflight_sms.py verify`/`confirm`
       per handset.
-- [ ] Verify whether Strands' `BedrockModel` reaches `deepseek.v3.2` and
-      `qwen.qwen3-32b-v1:0` in us-east-1 (the Project Mantle routing question)
+- [x] ~~Verify whether Strands' `BedrockModel` reaches `deepseek.v3.2` and
+      `qwen.qwen3-32b-v1:0` in us-east-1~~ — **YES, confirmed 2026-08-22.** Both
+      round-tripped a prompt through `BedrockModel` with no Mantle-specific
+      configuration, so §13's third hard guardrail is satisfied and the ladder
+      keeps all five rungs.
+
+      **`list_foundation_models` does not list either id.** The us-east-1
+      catalogue offers `deepseek.r1-v1:0`, `qwen.qwen3-vl-235b` and
+      `qwen.qwen3-coder-30b-a3b-v1:0` — not `deepseek.v3.2` or
+      `qwen.qwen3-32b-v1:0` — yet both answer. Mantle-served models are
+      reachable without appearing in the catalogue, so a listing is evidence a
+      model exists, never evidence one is missing. Round-trip before concluding
+      anything is unavailable.
+
+      Re-run with `WOTCHA_PREFLIGHT_REGION=us-east-1 python
+      scripts/preflight_bedrock.py`.
 - [x] ~~Decide the working model ceiling~~ — Sonnet 4.6, agreement declined
 - [x] ~~Choose the region~~ — product in `ca-central-1`, §13 sweep in `us-east-1`

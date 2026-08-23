@@ -5,6 +5,7 @@ cross-region inference profiles sometimes require a `us.` prefix. Rather than
 assume, try each candidate and report. Run this before anything depends on a
 model id.
 """
+import os
 import sys
 
 import boto3
@@ -12,9 +13,10 @@ from botocore.exceptions import ClientError
 from strands import Agent
 from strands.models import BedrockModel
 
-# The product region. Re-run with us-east-1 to exercise the open-weight rungs,
-# which ca-central-1 does not offer at all.
-REGION = "ca-central-1"
+# The product region. Override to us-east-1 to exercise the open-weight rungs,
+# which ca-central-1 does not offer at all:
+#   WOTCHA_PREFLIGHT_REGION=us-east-1 python scripts/preflight_bedrock.py
+REGION = os.environ.get("WOTCHA_PREFLIGHT_REGION", "ca-central-1")
 
 # Verified reachable 2026-08-20 unless noted. Bare ids (no us./global. prefix)
 # are rejected -- that is why none appear here.
