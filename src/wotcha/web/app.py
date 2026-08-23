@@ -26,7 +26,7 @@ from wotcha.domain.models import (
     Week,
 )
 from wotcha.store.repo import Repository
-from wotcha.web.tokens import parse_token
+from wotcha.web.tokens import parse_public_token, parse_token
 
 LEVEL_LABELS = [
     (SignalLevel.LOVED, "\U0001F60D"),
@@ -151,6 +151,48 @@ def _correction_html(slot, meals: dict, token: str, delivered,
           </details>"""
 
 
+def _public_page(week: Week, meals: dict) -> str:
+    """The same week, for anyone with the link and nobody in particular.
+
+    Rationale is shown here though it is cook-only on the private page: on a
+    public page the agent's reasoning is the exhibit, not a household detail.
+    Nobody is named -- not the reader, not the eaters -- and there is nothing
+    to submit, so a read-only link is read-only in structure rather than by
+    convention.
+    """
+    rows = "".join(
+        f'''
+        <li>
+          <div class="day">{WEEKDAYS[slot.on_date.weekday()]}</div>
+          <div class="meal">{html.escape(
+              meals[slot.meal_id].name if slot.meal_id in meals else slot.meal_id)}</div>
+          <div class="why">{html.escape(slot.rationale)}</div>
+        </li>'''
+        for slot in week.slots
+    )
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wotcha</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font: 16px/1.5 system-ui, sans-serif; margin: 0 auto; padding: 1.5rem;
+         max-width: 34rem; }}
+  ul {{ list-style: none; padding: 0; }}
+  li {{ padding: .75rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }}
+  .day {{ font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+          opacity: .6; }}
+  .meal {{ font-size: 1.1rem; }}
+  .why {{ font-size: .9rem; opacity: .75; margin-top: .2rem; }}
+  .note {{ font-size: .8rem; opacity: .6; margin-top: 1.5rem; }}
+</style></head><body>
+<h1>The week</h1>
+<ul>{rows}</ul>
+<p class="note">A read-only view of one household's plan, and why the agent
+chose it. Week of {week.week_start.isoformat()}.</p>
+</body></html>"""
+
+
 def _page(member: Member, week: Week, meals: dict, token: str,
           outcomes: dict, today: date) -> str:
     # The rationale is shown only to cooks -- everyone else sees the meal and
@@ -244,6 +286,22 @@ def handler(event: dict, _context) -> dict:
     if len(parts) != 2:
         return _resp(404, "Not found", "text/plain")
     route, token = parts
+
+    # Resolved before the person-token parse: a public link carries no person,
+    # and its signature is domain-separated so it cannot satisfy parse_token
+    # below -- which is what stops a read-only URL authorising a write.
+    if route == "p":
+        if method != "GET":
+            return _resp(404, "Not found", "text/plain")
+        public_household = parse_public_token(token, _secret())
+        if public_household is None:
+            return _resp(403, "That link isn't valid.", "text/plain")
+        repo = _repo()
+        week = _week_to_show(repo, public_household, local_today())
+        if week is None:
+            return _resp(200, "<p>No week published yet.</p>")
+        meals = {m.meal_id: m for m in repo.list_meals(public_household)}
+        return _resp(200, _public_page(week, meals))
 
     claim = parse_token(token, _secret())
     if claim is None:

@@ -19,7 +19,7 @@ from wotcha.domain.models import (
 from wotcha.store import keys
 from wotcha.store.repo import Repository
 from wotcha.web import app
-from wotcha.web.tokens import make_token
+from wotcha.web.tokens import make_public_token, make_token
 
 HID, SECRET = "demo", "test-secret"
 
@@ -499,3 +499,61 @@ def test_a_future_night_is_not_asked_in_the_past_tense(seeded):
     body = app.handler(req("GET", f"/w/{token}"), None)["body"]
     assert "not what happened?" not in body
     assert "plans changed?" in body
+
+
+# --- public read-only page ----------------------------------------------
+
+def test_the_public_page_shows_the_week(seeded):
+    resp = app.handler(req("GET", f"/p/{make_public_token(HID, SECRET)}"), None)
+    assert resp["statusCode"] == 200
+    assert "Chili" in resp["body"]
+
+
+def test_the_public_page_shows_the_rationale(seeded):
+    """Cook-only on the private page, but on the public one it is the whole
+    exhibit: the agent's reasoning is the thing worth showing."""
+    resp = app.handler(req("GET", f"/p/{make_public_token(HID, SECRET)}"), None)
+    assert "Cook once, eat twice." in resp["body"]
+
+
+def test_the_public_page_names_nobody(seeded):
+    """Nothing on it should imply a person is looking, or that these
+    particular people eat these particular dinners."""
+    body = app.handler(req("GET", f"/p/{make_public_token(HID, SECRET)}"), None)["body"]
+    assert "Maya" not in body
+    assert "Riley" not in body
+
+
+def test_the_public_page_offers_no_way_to_write(seeded):
+    """No reactions, no corrections. A read-only link that renders a form is
+    a read-only link in name only."""
+    body = app.handler(req("GET", f"/p/{make_public_token(HID, SECRET)}"), None)["body"]
+    assert "<form" not in body
+    assert "<button" not in body
+
+
+def test_a_public_token_cannot_react(seeded):
+    """The write routes authorise with parse_token, which must refuse it."""
+    token = make_public_token(HID, SECRET)
+    resp = app.handler(req("POST", f"/r/{token}",
+                           f"level=loved&on_date={_current_monday()}&meal_id=chili"), None)
+    assert resp["statusCode"] == 403
+
+
+def test_a_public_token_cannot_deliver_an_outcome(seeded):
+    token = make_public_token(HID, SECRET)
+    resp = app.handler(
+        req("POST", f"/o/{token}", _outcome_body(_current_monday(), "takeout")), None)
+    assert resp["statusCode"] == 403
+    assert seeded.outcomes_for_week(HID, _current_monday()) == {}
+
+
+def test_a_person_token_is_not_a_public_page(seeded):
+    """A family member's private link must not double as a public URL."""
+    resp = app.handler(req("GET", f"/p/{make_token(HID, 'maya', SECRET)}"), None)
+    assert resp["statusCode"] == 403
+
+
+def test_the_public_page_is_read_only_by_method(seeded):
+    resp = app.handler(req("POST", f"/p/{make_public_token(HID, SECRET)}", ""), None)
+    assert resp["statusCode"] == 404

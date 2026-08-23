@@ -261,6 +261,27 @@ Requires Python 3.12+, an AWS account/credentials configured for the `ca-central
 
 **Standing safety property, not a default left implicit:** `wotcha.channel.get_channel()` defaults to the `console` channel — it prints instead of texting — whenever `WOTCHA_CHANNEL` is unset, and every deploy command in this repo (`make runtime-deploy`) sets it explicitly rather than relying on that default. Reaching a real phone is meant to require a deliberate, visible act every time, never an omission.
 
+## The public read-only link
+
+The family's own links are per-person and permanent. A **public** link is a
+different kind of token entirely: it names a household and no person, is
+signed in a separate domain, and therefore cannot react, correct a night, or
+authorise anything at all -- `/r/` and `/o/` authorise with the person-token
+parser, which refuses it by construction rather than by a check.
+
+```bash
+WOTCHA_BASE_URL=<the WebUrl output> \
+  .venv/bin/python scripts/public_link.py demo
+```
+
+It shows the week, the meals, and the Planner's rationale -- which is
+cook-only on the family page, but on a public one is the whole exhibit. It
+names nobody.
+
+**Mint one only for a household you mean to publish.** There is no
+`/p/<household_id>` route on purpose: that would be enumerable, and a guessed
+household id would expose a real family's week.
+
 ## A note on the backfilled history
 
 `data/household.local.json` — the untracked household file, not the sample one committed here — includes the author's real household dinner history, entered by recall rather than logged in real time, along with the current real Safe List and a small number of drift cases (meals a specific person is remembered to have gone off, and roughly when) labelled as ground truth for the M3 Curator's eventual scorecard. **This history is reconstructed from memory, not measured contemporaneously, and is disclosed here plainly as such.** The label quality is what it is — a parent's honest recollection of "we stopped making tacos around June" — not a logged fact. From this deployment onward, every week is real and logged as it happens; the backfill exists only to give the Curator something to reason about before three weeks of live data exists.

@@ -6,9 +6,12 @@ That separation is currently a convention: `data/household.json` still ships
 fill them in and commit. A convention nothing checks is a convention that
 holds until the evening someone is in a hurry with three handsets waiting.
 """
+import json
 import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,4 +63,58 @@ def test_no_tracked_file_carries_a_real_phone_number():
     assert not offenders, (
         f"real phone numbers in tracked files: {offenders}. Household numbers "
         f"belong in data/household.local.json, which is gitignored."
+    )
+
+
+LOCAL_HOUSEHOLD = ROOT / "data" / "household.local.json"
+AUTHOR = re.search(
+    r"Copyright \(c\) \d{4} (.+)", (ROOT / "LICENSE").read_text()
+).group(1).strip()
+
+
+def test_the_real_household_identity_is_in_no_tracked_file():
+    """Reads the real names from the untracked file rather than naming them.
+
+    A guard that hardcodes what it is protecting publishes it -- so the values
+    come from `data/household.local.json`, which is gitignored. That file only
+    exists on the machine where this mistake gets made, which is exactly where
+    the check needs to fire; CI has nothing to compare against and skips.
+
+    Phone numbers are covered above by shape. Names and the household id can
+    only be caught by knowing them, and they leak just as easily: a docstring
+    example or a test fixture reaching for a familiar string is how it
+    actually happens.
+    """
+    if not LOCAL_HOUSEHOLD.exists():
+        pytest.skip("no local household file; nothing to compare against")
+
+    raw = json.loads(LOCAL_HOUSEHOLD.read_text())
+    secrets = {raw["household_id"]}
+    for member in raw["members"]:
+        secrets.add(member["person_id"])
+        secrets.add(member["name"])
+    # Short or generic tokens would match half the repo by accident.
+    secrets = {s for s in secrets if s and len(s) > 3}
+
+    offenders = {}
+    for path in _tracked_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+        # The author's name is legitimate attribution in LICENSE and the
+        # spec -- and the household id is his surname, so it collides. Strip
+        # the attribution first, and take the name from LICENSE rather than
+        # writing it here: a guard containing the string it searches for
+        # matches itself.
+        text = text.replace(AUTHOR, "")
+        hits = sorted(
+            s for s in secrets
+            if re.search(rf"\b{re.escape(s)}\b", text, re.IGNORECASE)
+        )
+        if hits:
+            offenders[path.relative_to(ROOT).as_posix()] = hits
+    assert not offenders, (
+        f"real household identity in tracked files: {offenders}. This repo is "
+        f"public; the real household lives only in data/household.local.json."
     )
