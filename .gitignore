@@ -34,5 +34,11 @@ cdk.out/
 credentials
 .aws/
 
+# The real household: real names, real numbers, real history. The committed
+# data/household.json is the public pseudonymous one; this is its counterpart
+# and must never be tracked. seed_household.py takes --file, so which one is
+# loaded is always stated.
+data/household.local.json
+
 # macOS
 .DS_Store

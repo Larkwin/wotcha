@@ -22,13 +22,13 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+from boto3.dynamodb.conditions import Key
+
 from wotcha.config import settings
 from wotcha.domain.fence import Fence
 from wotcha.domain.models import Meal, Member, Signal, Slot, Week
 from wotcha.store import keys
 from wotcha.store.repo import Repository
-
-DATA = Path(__file__).resolve().parent.parent / "data" / "household.json"
 
 
 def validate_household_data(raw: dict) -> None:
@@ -130,6 +130,32 @@ def check_no_live_week_is_overwritten(repo: Repository, hid: str, raw: dict) -> 
             )
 
 
+def check_the_household_already_exists(repo: Repository, hid: str) -> None:
+    """Raise if nothing is stored under this household id.
+
+    The other two guards key off ids read from the same file they are meant
+    to protect against: a file naming the wrong household matches no stored
+    member and no stored week, so both pass, every write lands in a fresh
+    partition, and the run reports success while the real household is left
+    exactly as it was. Nothing downstream notices -- the planner reads an
+    empty tenant and the family page renders nothing.
+
+    Creating a household is legitimate, so this only demands that it be
+    stated rather than assumed.
+    """
+    existing = repo._table.query(
+        KeyConditionExpression=Key("pk").eq(keys.hh_pk(hid)), Limit=1
+    )
+    if not existing.get("Items"):
+        raise ValueError(
+            f"refusing to create household {hid!r}: nothing is stored under it. "
+            f"If that is a typo, or --file points at the wrong household file, "
+            f"seeding it would leave the real household untouched and report "
+            f"success. Re-run with --new-household if you really mean to "
+            f"create it."
+        )
+
+
 def check_no_phone_number_is_erased(repo: Repository, hid: str, raw: dict) -> None:
     """Raise, naming the person, if seeding would change or erase a phone
     number already in the table.
@@ -169,6 +195,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Load data/household.json into DynamoDB.")
     parser.add_argument(
+        "--file", required=True, type=Path,
+        help=("household JSON to load. Required: data/household.json is the "
+              "public pseudonymous household and the real one lives untracked "
+              "beside it, so defaulting to either silently picks a tenant."),
+    )
+    parser.add_argument(
+        "--new-household", action="store_true",
+        help=("create a household that has nothing stored under it yet. "
+              "Needed for a first seed; otherwise it means --file names the "
+              "wrong household."),
+    )
+    parser.add_argument(
         "--force", action="store_true",
         help=("overwrite weeks the household actually lived, and phone numbers "
               "already in the table. Destroys hand-entered history that cannot "
@@ -176,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     s = settings()
-    raw = json.loads(DATA.read_text())
+    raw = json.loads(args.file.read_text())
     hid = raw["household_id"]
 
     validate_household_data(raw)
@@ -185,6 +223,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # Both checks run against the live table before anything is written, so a
     # refusal leaves the table exactly as it was rather than half-seeded.
+    # Runs even under --force: --force means "replace what is there", never
+    # "invent a tenant". The two guards below protect data that exists; this
+    # one catches a file pointed at data that does not.
+    if not args.new_household:
+        check_the_household_already_exists(repo, hid)
+
     if not args.force:
         check_no_live_week_is_overwritten(repo, hid, raw)
         check_no_phone_number_is_erased(repo, hid, raw)

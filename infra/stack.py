@@ -44,7 +44,12 @@ class WotchaStack(Stack):
         from aws_cdk import aws_lambda as lambda_
         from aws_cdk import aws_scheduler as scheduler
 
-        household_id = os.environ.get("WOTCHA_HOUSEHOLD_ID", "demo")
+        # No default. "demo" is the public sample household in
+        # data/household.json, and defaulting to it points the runtime and the
+        # family page at a tenant nobody lives in -- with a green deploy. The
+        # Makefile guard catches this for `make deploy`; this catches a direct
+        # `cdk deploy`, which bypasses it.
+        household_id = os.environ["WOTCHA_HOUSEHOLD_ID"]
         runtime_arn = os.environ.get("WOTCHA_RUNTIME_ARN", "")
         runtime_role_arn = os.environ.get("WOTCHA_RUNTIME_ROLE_ARN", "")
         # Schedule ships disabled by default -- a system that texts a family

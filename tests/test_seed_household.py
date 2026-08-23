@@ -11,7 +11,6 @@ from datetime import UTC, date, datetime
 
 import boto3
 import pytest
-import seed_household
 from moto import mock_aws
 from seed_household import main, validate_household_data
 
@@ -20,6 +19,11 @@ from wotcha.domain.models import Member, Slot, Week
 from wotcha.store.repo import Repository
 
 HID = "test"
+
+
+def F(path, *extra) -> list[str]:
+    """argv for a seed of `path`. --file is required, so every call states it."""
+    return ["--file", str(path), *extra]
 
 
 def _valid_raw() -> dict:
@@ -54,8 +58,9 @@ def _valid_raw() -> dict:
 
 @pytest.fixture
 def live(monkeypatch, tmp_path):
-    """A table that already holds live data, and a household.json pointed at
-    a temp file so the owner's real one is never read or written."""
+    """A table that already holds live data, plus a temp household file. The
+    seeder takes its path as a required argument, so the owner's real file is
+    never reachable from a test."""
     monkeypatch.setenv("WOTCHA_HOUSEHOLD_ID", HID)
     monkeypatch.setenv("WOTCHA_TABLE_NAME", "wotcha-test")
     monkeypatch.setenv("WOTCHA_AWS_REGION", "us-east-1")
@@ -73,7 +78,6 @@ def live(monkeypatch, tmp_path):
         repo = Repository(table_name="wotcha-test", region="us-east-1")
         path = tmp_path / "household.json"
         path.write_text(json.dumps(_valid_raw()))
-        monkeypatch.setattr(seed_household, "DATA", path)
         yield repo, path
     settings.cache_clear()
 
@@ -97,11 +101,11 @@ def test_seeding_refuses_to_overwrite_a_published_week(live):
     """The ledger actively instructs the owner to extend the backfill through
     August. Doing that against the live table would silently destroy real
     logged weeks: real rationales, real outcomes, and the notified_at stamp."""
-    repo, _ = live
+    repo, path = live
     repo.put_week(_a_real_lived_week())
 
     with pytest.raises(ValueError, match="2026-08-03"):
-        main([])
+        main(F(path))
 
     after = repo.get_week(HID, date(2026, 8, 3))
     assert after.slots[0].rationale == "Morgan loved this on Jul 20."
@@ -110,10 +114,10 @@ def test_seeding_refuses_to_overwrite_a_published_week(live):
 
 def test_force_allows_replacing_a_published_week(live):
     """The escape hatch has to exist -- but it has to be typed."""
-    repo, _ = live
+    repo, path = live
     repo.put_week(_a_real_lived_week())
 
-    assert main(["--force"]) == 0
+    assert main(F(path, "--force")) == 0
     assert repo.get_week(HID, date(2026, 8, 3)).slots[0].rationale == \
         "backfilled from memory"
 
@@ -121,9 +125,9 @@ def test_force_allows_replacing_a_published_week(live):
 def test_seeding_a_week_that_was_never_published_is_fine(live):
     """A backfilled history week carries no published_at -- re-seeding those
     is the whole point of the script being safe to re-run."""
-    repo, _ = live
-    assert main([]) == 0
-    assert main([]) == 0  # idempotent
+    repo, path = live
+    assert main(F(path, "--new-household")) == 0  # first seed creates it
+    assert main(F(path)) == 0  # re-seeding needs no flag, and is idempotent
     assert repo.get_week(HID, date(2026, 8, 3)) is not None
 
 
@@ -132,12 +136,12 @@ def test_seeding_refuses_to_erase_a_phone_number_added_out_of_band(live):
     verification flow, is the only thing that makes a member reachable. The
     file has no phone for this member, so re-seeding would silently
     un-reach them."""
-    repo, _ = live
+    repo, path = live
     repo.put_member(HID, Member(person_id="a", name="A", email="a@example.com",
                                 phone="+15195550101", is_cook=True))
 
     with pytest.raises(ValueError, match="'a'"):
-        main([])
+        main(F(path))
 
     assert repo.list_members(HID)[0].phone == "+15195550101"
 
@@ -153,15 +157,15 @@ def test_seeding_a_matching_phone_number_is_fine(live):
     repo.put_member(HID, Member(person_id="a", name="A", email="a@example.com",
                                 phone="+15195550101", is_cook=True))
 
-    assert main([]) == 0
+    assert main(F(path)) == 0
     assert repo.list_members(HID)[0].phone == "+15195550101"
 
 
 def test_force_allows_changing_a_phone_number(live):
-    repo, _ = live
+    repo, path = live
     repo.put_member(HID, Member(person_id="a", name="A", email="a@example.com",
                                 phone="+15195550101", is_cook=True))
-    assert main(["--force"]) == 0
+    assert main(F(path, "--force")) == 0
     assert repo.list_members(HID)[0].phone is None
 
 
@@ -233,3 +237,40 @@ def test_valid_fixture_is_not_mutated_by_a_failing_copy():
     with pytest.raises(ValueError):
         validate_household_data(tampered)
     validate_household_data(original)  # still valid
+
+
+def test_seeding_requires_an_explicit_file():
+    """The file used to be a hardcoded constant, so the household seeded was
+    whatever `data/household.json` happened to contain. That file is now the
+    public pseudonymous household; the real one lives untracked beside it.
+    Defaulting to either is a silent choice of tenant, so there is no default."""
+    with pytest.raises(SystemExit):
+        main([])
+
+
+def test_seeding_refuses_to_create_a_household_that_does_not_exist(live):
+    """The failure this exists to stop: seed a file whose household_id does
+    not match the live one and nothing refuses, because every existing guard
+    keys off ids that are absent. The real household is left untouched while a
+    parallel one is created, and the run reports success."""
+    repo, path = live
+    raw = _valid_raw()
+    raw["household_id"] = "not-the-live-one"
+    path.write_text(json.dumps(raw))
+
+    with pytest.raises(ValueError, match="not-the-live-one"):
+        main(["--file", str(path)])
+
+    assert repo.list_meals("not-the-live-one") == []
+
+
+def test_creating_a_household_is_allowed_when_stated(live):
+    """A first seed genuinely does create a household. Stating it is a
+    deliberate act; the guard only stops the silent case."""
+    repo, path = live
+    raw = _valid_raw()
+    raw["household_id"] = "brand-new"
+    path.write_text(json.dumps(raw))
+
+    assert main(["--file", str(path), "--new-household"]) == 0
+    assert [m.meal_id for m in repo.list_meals("brand-new")] == ["m1"]

@@ -16,6 +16,9 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 VARS = ["WOTCHA_RUNTIME_ARN", "WOTCHA_RUNTIME_ROLE_ARN", "WOTCHA_SCHEDULE_ENABLED"]
 
+# Stated on every deploy below, so a household-id refusal never masks another.
+HH = {"WOTCHA_HOUSEHOLD_ID": "a-real-household"}
+
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make not installed")
 
 
@@ -57,7 +60,7 @@ def test_explicitly_empty_arns_are_allowed():
     deliberate act; leaving it unset is an accident. The guard distinguishes
     them."""
     result = _run(WOTCHA_RUNTIME_ARN="", WOTCHA_RUNTIME_ROLE_ARN="",
-                  WOTCHA_SCHEDULE_ENABLED="false")
+                  WOTCHA_SCHEDULE_ENABLED="false", **HH)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -66,7 +69,7 @@ def test_a_schedule_value_that_is_neither_true_nor_false_is_refused():
     silently disable the weekly schedule -- the same failure as forgetting
     it, wearing the costume of having remembered."""
     result = _run(WOTCHA_RUNTIME_ARN="arn:aws:x", WOTCHA_RUNTIME_ROLE_ARN="arn:aws:y",
-                  WOTCHA_SCHEDULE_ENABLED="yes")
+                  WOTCHA_SCHEDULE_ENABLED="yes", **HH)
     assert result.returncode != 0
     assert "true or false" in result.stdout
 
@@ -79,3 +82,20 @@ def test_the_guard_runs_before_anything_is_built():
     deps = next(line for line in makefile.splitlines()
                 if line.startswith("deploy:")).split(":", 1)[1].split()
     assert deps[0] == "check-deploy-env"
+
+
+def test_a_deploy_that_leaves_the_household_id_at_its_default_is_refused():
+    """`data/household.json` is the public pseudonymous household, and the
+    Makefile default matches it. Deploying at that default points the runtime
+    at a tenant the family does not live in: the planner finds no meals and
+    the family page is empty, with a green exit code and no error anywhere."""
+    result = _run(WOTCHA_RUNTIME_ARN="arn:aws:x", WOTCHA_RUNTIME_ROLE_ARN="arn:aws:y",
+                  WOTCHA_SCHEDULE_ENABLED="false")
+    assert result.returncode != 0
+    assert "WOTCHA_HOUSEHOLD_ID" in result.stdout
+
+
+def test_a_stated_household_id_is_allowed():
+    result = _run(WOTCHA_RUNTIME_ARN="arn:aws:x", WOTCHA_RUNTIME_ROLE_ARN="arn:aws:y",
+                  WOTCHA_SCHEDULE_ENABLED="false", **HH)
+    assert result.returncode == 0, result.stdout + result.stderr

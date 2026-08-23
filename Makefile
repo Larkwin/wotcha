@@ -97,6 +97,15 @@ check-deploy-env:
 		echo "  WOTCHA_RUNTIME_ARN= WOTCHA_RUNTIME_ROLE_ARN= WOTCHA_SCHEDULE_ENABLED=false make deploy"; \
 		exit 1; \
 	fi
+	@if [ "$(WOTCHA_HOUSEHOLD_ID)" = "$(WOTCHA_HOUSEHOLD_ID_DEFAULT)" ]; then \
+		echo "make deploy: REFUSING -- WOTCHA_HOUSEHOLD_ID is still '$(WOTCHA_HOUSEHOLD_ID_DEFAULT)'."; \
+		echo "That is the public sample household, not the one the family lives in."; \
+		echo "Deploying at this default does not fail: the planner reads an empty"; \
+		echo "tenant and the family page renders nothing, with a green exit code."; \
+		echo ""; \
+		echo "  WOTCHA_HOUSEHOLD_ID=<the household> make deploy"; \
+		exit 1; \
+	fi
 	@case "$$(printf %s '$(WOTCHA_SCHEDULE_ENABLED)' | tr A-Z a-z)" in \
 		true|false) ;; \
 		*) echo "make deploy: REFUSING -- WOTCHA_SCHEDULE_ENABLED must be true or false, got '$(WOTCHA_SCHEDULE_ENABLED)'."; \
@@ -139,7 +148,10 @@ deploy: check-deploy-env bootstrap-infra build-lambda
 # `make runtime-deploy WOTCHA_BASE_URL=https://xxxx.lambda-url.ca-central-1.on.aws`.
 WOTCHA_BASE_URL_DEFAULT := http://localhost:8080
 WOTCHA_BASE_URL ?= $(WOTCHA_BASE_URL_DEFAULT)
-WOTCHA_HOUSEHOLD_ID ?= demo
+# The public pseudonymous household in data/household.json. The real one is
+# never named in this repo -- state it on the command line or in the shell.
+WOTCHA_HOUSEHOLD_ID_DEFAULT := demo
+WOTCHA_HOUSEHOLD_ID ?= $(WOTCHA_HOUSEHOLD_ID_DEFAULT)
 WOTCHA_TABLE_NAME ?= wotcha
 WOTCHA_BEDROCK_MODEL_ID ?= us.anthropic.claude-sonnet-4-6
 WOTCHA_CHANNEL ?= console
