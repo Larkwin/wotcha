@@ -129,6 +129,10 @@ def read_message(
     A matched_meal_id the roster does not recognise is dropped. The model
     returns it as free text and can invent one, and a match to a meal that
     does not exist would render as a confident falsehood.
+
+    A read that both matches and proposes keeps the match and drops
+    proposed_name: the caller's Suggestion refuses a row asserting both, and
+    the match is the field that was actually checked against the roster.
     """
     try:
         read = _structured_read(text, render_roster(meals), model_id, region)
@@ -143,4 +147,18 @@ def read_message(
             "matched_meal_id": None,
             "kind": SuggestionKind.UNKNOWN,
         })
+    # Suggestion's own validator refuses a row that both matches and
+    # proposes -- the two would ask the cook a single contradictory
+    # question. That check lives on Suggestion, not LiaisonRead: a validator
+    # here would make structured_output raise on exactly the over-helpful
+    # reply this is meant to handle ("can we have tacos" plausibly produces
+    # both a match and a name), and read_message's except would collapse
+    # that into UNKNOWN -- discarding a perfectly good match because the
+    # model volunteered more than it was asked. Normalising instead keeps
+    # the match: it was checked against the real roster, while
+    # proposed_name is free text the model invented, so it is the field
+    # with nothing to lose. This runs after the unknown-id drop above, so
+    # an invented matched_meal_id never takes proposed_name down with it.
+    if read.matched_meal_id and read.proposed_name:
+        read = read.model_copy(update={"proposed_name": None})
     return read

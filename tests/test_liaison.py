@@ -5,8 +5,10 @@ is the contract around it: what it is given, what shape it must return, and
 that a model failure degrades to a row the cook can still see rather than a
 lost message.
 """
+from datetime import UTC, datetime
+
 from wotcha.agents import liaison
-from wotcha.domain.models import Meal, MealStatus, SuggestionKind
+from wotcha.domain.models import Meal, MealStatus, Suggestion, SuggestionKind
 
 MEALS = [
     Meal(meal_id="tacos", name="Tacos", protein="beef", effort_minutes=30,
@@ -67,3 +69,43 @@ def test_a_match_against_a_real_meal_survives(monkeypatch):
                                 model_id="test-model", region="us-east-1")
     assert read.matched_meal_id == "tacos"
     assert read.kind is SuggestionKind.EXISTING_MEAL
+
+
+def test_a_valid_match_with_a_proposed_name_keeps_the_match(monkeypatch):
+    """"Can we have tacos" plausibly produces both a match and a name -- the
+    model was not asked to choose. Suggestion refuses a row asserting both
+    (matched_meal_id and proposed_name ask the cook two contradictory
+    questions), so read_message must resolve the collision itself rather
+    than hand the caller a read that blows up downstream. The match wins:
+    it was checked against the real roster, while proposed_name is free
+    text the model invented and has nothing to lose."""
+    monkeypatch.setattr(liaison, "_structured_read", lambda *a, **k: liaison.LiaisonRead(
+        kind=SuggestionKind.EXISTING_MEAL, matched_meal_id="tacos",
+        proposed_name="Tacos", note="x"))
+    read = liaison.read_message("can we have tacos", MEALS,
+                                model_id="test-model", region="us-east-1")
+    assert read.matched_meal_id == "tacos"
+    assert read.proposed_name is None
+    # The assertion that actually pins the hazard shut: the normalised read
+    # must be usable to build the real downstream row without raising.
+    Suggestion(
+        household_id="demo", suggestion_id="msg-1", person_id="kid",
+        text="can we have tacos", created_at=datetime.now(UTC),
+        kind=read.kind, matched_meal_id=read.matched_meal_id,
+        proposed_name=read.proposed_name, note=read.note,
+    )
+
+
+def test_an_invented_match_with_a_proposed_name_keeps_the_name(monkeypatch):
+    """The unknown-id drop must run before the match/name collision check.
+    Otherwise an invented matched_meal_id would take a perfectly good
+    proposed_name down with it, when dropping the bad id alone already
+    leaves a clean, usable read."""
+    monkeypatch.setattr(liaison, "_structured_read", lambda *a, **k: liaison.LiaisonRead(
+        kind=SuggestionKind.EXISTING_MEAL, matched_meal_id="invented",
+        proposed_name="Poutine", note="x"))
+    read = liaison.read_message("can we have poutine", MEALS,
+                                model_id="test-model", region="us-east-1")
+    assert read.matched_meal_id is None
+    assert read.proposed_name == "Poutine"
+    assert read.kind is SuggestionKind.UNKNOWN
