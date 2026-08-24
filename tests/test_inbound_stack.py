@@ -7,11 +7,14 @@ silence -- and every one of these has that shape, because the phone number's
 two-way configuration lives outside CloudFormation and cannot be re-checked by
 a deploy.
 """
+import re
 from pathlib import Path
 
 import pytest
 
-STACK = (Path(__file__).resolve().parent.parent / "infra" / "stack.py").read_text()
+REPO_ROOT = Path(__file__).resolve().parent.parent
+STACK = (REPO_ROOT / "infra" / "stack.py").read_text()
+MAKEFILE = (REPO_ROOT / "Makefile").read_text()
 
 # Comment lines stripped. Every "this must not appear" assertion below is
 # about what the stack *does*, and stack.py explains its choices at length --
@@ -120,6 +123,52 @@ def test_the_consumer_can_reach_bedrock():
     """
     assert "bedrock:InvokeModel" in CODE
     assert "bedrock:InvokeModelWithResponseStream" in CODE
+
+
+def test_the_liaison_function_uses_the_bundle_that_installs_strands_agents():
+    """C1: wotcha/agents/liaison.py does `from strands import Agent`, and
+    strands-agents is third-party -- it does not ship with the Lambda
+    runtime. Nothing before this test checked that the asset the Liaison
+    function actually points at is the one that ever gets strands-agents
+    installed into it, and the gap is not theoretical:
+    test_the_consumer_is_wired_to_the_inbound_queue above passes today even
+    though the Liaison could not cold-start at all if it were pointed at
+    build/web -- every real inbound text would raise ModuleNotFoundError
+    before executing a line, fail its batch of one (batch_size=1, see
+    test_the_consumer_batches_small), redeliver five times, and dead-letter.
+    A green test suite asserting a feature is deployed, while it is dead.
+
+    Read the Makefile and infra/stack.py as text, like every other test in
+    this module -- the CDK is not importable here, and a Makefile has no
+    importable form at all. This deliberately does not hardcode
+    "build/liaison" as a literal in both places: it reads the --target out
+    of the Makefile's strands-agents install and confirms *that* directory
+    -- whatever it is named -- is the one wired to the Liaison Function, so
+    renaming the asset in only one file still fails this test.
+    """
+    idx = MAKEFILE.index("pip install strands-agents")
+    target_match = re.search(r"--target\s+(\S+)", MAKEFILE[idx:idx + 200])
+    assert target_match, "no --target directory follows the strands-agents install"
+    liaison_asset = target_match.group(1)
+
+    # infra/stack.py's from_asset paths are relative to infra/, hence "../".
+    asset_ref = f'"../{liaison_asset}"'
+    assert asset_ref in STACK, (
+        f"no Code.from_asset({asset_ref}) in stack.py -- the Liaison's code "
+        "asset and the Makefile's strands-agents install target have drifted apart"
+    )
+    var_match = re.search(
+        r'(\w+)\s*=\s*lambda_\.Code\.from_asset\(' + re.escape(asset_ref) + r'\)',
+        STACK,
+    )
+    assert var_match, "no variable is built from the strands-agents bundle"
+
+    start = STACK.index('self, "Liaison",')
+    block = STACK[start:start + 700]
+    assert f"code={var_match.group(1)}," in block, (
+        "the Liaison Function is not passed the asset that gets "
+        "strands-agents installed into it"
+    )
 
 
 def test_the_consumer_batches_small():

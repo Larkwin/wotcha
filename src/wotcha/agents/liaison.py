@@ -159,6 +159,22 @@ def read_message(
     # proposed_name is free text the model invented, so it is the field
     # with nothing to lose. This runs after the unknown-id drop above, so
     # an invented matched_meal_id never takes proposed_name down with it.
+    #
+    # kind is set to EXISTING_MEAL here too, not left as whatever the model
+    # said. Above, an invented matched_meal_id clears kind to UNKNOWN
+    # alongside it -- deliberately, because that step is undoing the
+    # model's own (wrong) classification and nothing here has touched
+    # proposed_name. This step is different: it has just overridden the
+    # model by discarding proposed_name, so a kind left disagreeing with
+    # the fields beside it would record neither what the model said nor
+    # what was actually stored. lambdas/liaison.py writes read_kind
+    # straight into the eval corpus alongside matched and proposed_name --
+    # a NEW_MEAL/matched-but-no-name row there is a corrupted training
+    # example, not a faithful account of either the model's read or the
+    # stored suggestion.
     if read.matched_meal_id and read.proposed_name:
-        read = read.model_copy(update={"proposed_name": None})
+        read = read.model_copy(update={
+            "proposed_name": None,
+            "kind": SuggestionKind.EXISTING_MEAL,
+        })
     return read

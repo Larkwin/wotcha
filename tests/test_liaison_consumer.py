@@ -10,6 +10,7 @@ import liaison as consumer
 import pytest
 from moto import mock_aws
 
+import wotcha.agents.liaison as agent_liaison
 from wotcha.agents.liaison import LiaisonRead
 from wotcha.domain.models import Meal, MealStatus, Member, SuggestionKind, SuggestionStatus
 from wotcha.store.repo import Repository
@@ -127,6 +128,40 @@ def test_a_redelivery_after_a_status_change_leaves_it_untouched(seeded, monkeypa
 
     assert seeded.list_suggestions(HID)[0].status == SuggestionStatus.APPROVED
     assert called == []
+
+
+def test_a_match_with_a_name_reaches_the_eval_corpus_as_existing_meal(seeded, monkeypatch):
+    """M1: agents.liaison.read_message normalises a valid match plus a
+    proposed_name by dropping proposed_name and (as of this fix) setting
+    kind=EXISTING_MEAL. Before the fix, kind was left as whatever the model
+    said -- so a NEW_MEAL classification survived untouched while
+    proposed_name was cleared, and handle_record's put_eval_record wrote
+    read_kind="new_meal" beside matched="tacos" and proposed_name=None into
+    the eval corpus extraction_accuracy is measured from: neither what the
+    model said (which also had a name) nor what was actually stored (no
+    name). This exercises the real read_message, not the module-level fake
+    the `seeded` fixture installs, so the normalisation logic actually runs.
+    """
+    monkeypatch.setattr(consumer, "read_message", agent_liaison.read_message)
+    monkeypatch.setattr(
+        agent_liaison, "_structured_read",
+        lambda *a, **k: LiaisonRead(kind=SuggestionKind.NEW_MEAL,
+                                    matched_meal_id="tacos",
+                                    proposed_name="Tacos Supreme", note="x"),
+    )
+
+    consumer.handle_record(seeded, HID, _record(body="tacos please"),
+                           "test-model", "us-east-1")
+
+    rows = seeded.list_suggestions(HID)
+    assert rows[0].kind == SuggestionKind.EXISTING_MEAL
+    assert rows[0].matched_meal_id == "tacos"
+    assert rows[0].proposed_name is None
+
+    records = seeded._query_prefix(HID, "EVAL#")
+    assert records[0]["read_kind"] == "existing_meal"
+    assert records[0]["matched"] == "tacos"
+    assert records[0]["proposed_name"] is None
 
 
 def test_a_failed_read_still_stores_the_text_and_logs_an_eval_record(seeded, monkeypatch):

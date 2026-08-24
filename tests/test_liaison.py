@@ -96,6 +96,24 @@ def test_a_valid_match_with_a_proposed_name_keeps_the_match(monkeypatch):
     )
 
 
+def test_a_valid_match_overrides_a_disagreeing_new_meal_classification(monkeypatch):
+    """M1: the model can classify a message as NEW_MEAL and still return a
+    matched_meal_id that checks out against the real roster (an over-helpful
+    reply, same as "can we have tacos" above). Dropping proposed_name here
+    without also correcting kind would leave a read that says both
+    kind=new_meal and matched_meal_id=tacos -- neither what the model said
+    (it also said proposed_name) nor what actually gets stored (no name).
+    kind must follow the field that was actually kept."""
+    monkeypatch.setattr(liaison, "_structured_read", lambda *a, **k: liaison.LiaisonRead(
+        kind=SuggestionKind.NEW_MEAL, matched_meal_id="tacos",
+        proposed_name="Tacos Supreme", note="x"))
+    read = liaison.read_message("tacos please", MEALS,
+                                model_id="test-model", region="us-east-1")
+    assert read.matched_meal_id == "tacos"
+    assert read.proposed_name is None
+    assert read.kind is SuggestionKind.EXISTING_MEAL
+
+
 def test_an_invented_match_with_a_proposed_name_keeps_the_name(monkeypatch):
     """The unknown-id drop must run before the match/name collision check.
     Otherwise an invented matched_meal_id would take a perfectly good
