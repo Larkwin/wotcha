@@ -10,7 +10,7 @@ being done yet.
 | | |
 |---|---|
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
-| Suite | 271 tests, lint clean, Python 3.12 and 3.14 |
+| Suite | 288 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
 | Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
@@ -99,6 +99,24 @@ real week has been planned, published and texted.
   INSUFFICIENT_DATA on the next quiet day; and **`ca-central-1`**, because
   AWS's own spending-alarm walkthrough says to switch to `us-east-1`, which
   is true for `AWS/Billing` and wrong for this regional namespace.
+- **Escalations resolve themselves.** `escalate` wrote `resolved: False`,
+  `unresolved_escalations` read it, and nothing ever set it true — the first
+  unsatisfiable week would have left a question open permanently. Resolution
+  is now derived at read time in `domain/escalations.py`, the same shape as
+  `outcomes.py`: a `fence_unsatisfiable` question naming a week that has
+  since been published is answered, because the published week *is* the
+  answer. A stored `resolved: True` still wins, so M2's inbound reply has
+  somewhere to land. Nothing is written and nothing is deleted — the
+  `ESCALATION#` history stays whole for the reliability corpus; only the open
+  view narrows.
+- **`_tell_the_cook`'s fallback narrowed to weekless rows.** It reached for
+  any open escalation when the target week had none, which was harmless while
+  everything stayed open forever. It is not harmless now that `retirement`
+  and `new_constraint` rows stay open by design: a run that failed to publish
+  *without* escalating (exhausted attempt cap, a crash) would have handed the
+  cook a months-old retirement question labelled with the wrong week. The
+  fallback now covers only rows that name no week at all, which is what it
+  was written for.
 - **`preflight_sms.py spend`**, wired into `make preflight`. Answers the two
   questions the alarm cannot answer about itself: is the metric publishing at
   all, and would the alarm reach a person. No datapoints is reported as
@@ -108,17 +126,14 @@ real week has been planned, published and texted.
 
 ## Next — ordered
 
-1. **Escalation resolution.** Written `resolved: False`, read, never settled —
-   nothing sets it true. The first unsatisfiable week asks the cook a question
-   they cannot answer.
-2. **M2 — Liaison and two-way SMS.** The structural gate: inbound free-text
+1. **M2 — Liaison and two-way SMS.** The structural gate: inbound free-text
    signals, suggestions, disruption capture and "what's for dinner tonight?"
    all arrive through it. Needs the SQS queue, DLQ and IAM role in
    `docs/two-way-sms-setup.md`; the existing long code is already the right
    number. **Verify inbound works in the sandbox** — the documented
    restrictions are all outbound and spend, but that is absence of mention,
    not a guarantee.
-3. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
+2. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
    differentiator, and the only milestone genuinely gated on accumulated
    history.
 
@@ -176,6 +191,15 @@ real week has been planned, published and texted.
   with one household the blast radius is two duplicate texts. Found while
   building the spend alarm; the fix belongs with whatever makes sends
   resumable, not with the alarm.
+- **`retirement` and `new_constraint` escalations never close.** A published
+  week answers a fence question; it says nothing about whether a meal should
+  be retired or a new hard constraint accepted. Nothing in the system can
+  know those were settled, and inventing a signal — ageing them out, or
+  reading the Planner's silence as assent — is exactly what
+  `household-notes.md` forbids. They accumulate, but the same-week filter and
+  the `notified_at` guard mean they never re-text anyone, and the narrowed
+  fallback means they can no longer be mistaken for this week's question.
+  They close in M2, when the cook can answer one.
 - **Single-tenant in execution.** Storage and the read path are multi-tenant;
   `runtime.py` reads one household id from the environment, so the scheduler
   plans for exactly one household however many exist. Deliberate for v1 —

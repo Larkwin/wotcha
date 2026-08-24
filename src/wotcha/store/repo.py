@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 import boto3
 from boto3.dynamodb.conditions import Key
 
+from wotcha.domain.escalations import is_resolved
 from wotcha.domain.fence import Fence
 from wotcha.domain.models import Meal, MealStatus, Member, Outcome, Signal, Week
 from wotcha.store import keys
@@ -157,9 +158,30 @@ class Repository:
         correctly refused to publish an impossible week and the household
         simply got no plan and no explanation. Sorted explicitly rather than
         trusting query order, exactly like recent_weeks.
+
+        "Settled" is resolved at read time by `domain.escalations.is_resolved`
+        rather than read off the row, because nothing ever wrote the flag --
+        a fence question is answered by its week publishing, and that answer
+        is already in the table. See that module for why the other reasons
+        are not derived.
+
+        Costs one get_week per candidate row that names a week. Bounded by
+        the open set, which is small, and which this filtering is what keeps
+        small -- before it, the set only ever grew.
         """
-        items = [i for i in self._query_prefix(household_id, "ESCALATION#")
-                 if not i.get("resolved")]
+        published: dict[str, bool] = {}
+        items = []
+        for i in self._query_prefix(household_id, "ESCALATION#"):
+            week_start = i.get("week_start")
+            if week_start and week_start not in published:
+                # Cached across rows: a replan raises the same question again
+                # every run, so several open rows commonly name one week.
+                published[week_start] = self.get_week(
+                    household_id, date.fromisoformat(week_start)
+                ) is not None
+            if not is_resolved(row=i,
+                               week_published=published.get(week_start, False)):
+                items.append(i)
         items.sort(key=lambda i: i["sk"], reverse=True)
         return items
 

@@ -260,3 +260,49 @@ def test_outcomes_are_isolated_between_households(repo):
                                                 outcome=SlotOutcome.TAKEOUT))
     assert repo.outcomes_for_week(HID, date(2026, 8, 24))[
         date(2026, 8, 25)].outcome is SlotOutcome.SKIPPED
+
+
+def test_a_fence_escalation_closes_when_its_week_publishes(repo):
+    """The escalation fix. Nothing ever set `resolved` true, so the first
+    unsatisfiable week left a question open forever. A published week for the
+    date it names is the answer, and it is already in the table."""
+    repo.put_escalation(HID, _escalation("which rule?", "2026-08-22T09:00:00+00:00"))
+    assert len(repo.unresolved_escalations(HID)) == 1
+    repo.put_week(Week(household_id=HID, week_start=date(2026, 8, 24),
+                       published_at=datetime(2026, 8, 22, tzinfo=UTC)))
+    assert repo.unresolved_escalations(HID) == []
+
+
+def test_a_retirement_escalation_survives_its_week_publishing(repo):
+    """Publishing a week says nothing about whether a meal should be retired,
+    so that question is still owed an answer. Closes in M2."""
+    row = _escalation("retire tacos?", "2026-08-22T09:00:00+00:00")
+    row["reason"] = "retirement"
+    repo.put_escalation(HID, row)
+    repo.put_week(Week(household_id=HID, week_start=date(2026, 8, 24),
+                       published_at=datetime(2026, 8, 22, tzinfo=UTC)))
+    assert len(repo.unresolved_escalations(HID)) == 1
+
+
+def test_every_row_for_one_week_closes_together(repo):
+    """A replan raises the same question again as a fresh row on every run,
+    so one unsatisfiable week leaves several. The week publishing answers all
+    of them -- and the repo asks the store about that week once, not once per
+    row."""
+    for i, ts in enumerate(("2026-08-22T09:00:00+00:00", "2026-08-22T10:00:00+00:00",
+                            "2026-08-22T11:00:00+00:00")):
+        repo.put_escalation(HID, _escalation(f"attempt {i}?", ts))
+    assert len(repo.unresolved_escalations(HID)) == 3
+    repo.put_week(Week(household_id=HID, week_start=date(2026, 8, 24),
+                       published_at=datetime(2026, 8, 22, tzinfo=UTC)))
+    assert repo.unresolved_escalations(HID) == []
+
+
+def test_the_escalation_history_is_not_deleted_by_resolving(repo):
+    """Resolution is a read-time judgement, never a write. The rows stay
+    queryable for the reliability corpus -- only the open view narrows."""
+    repo.put_escalation(HID, _escalation("which rule?", "2026-08-22T09:00:00+00:00"))
+    repo.put_week(Week(household_id=HID, week_start=date(2026, 8, 24),
+                       published_at=datetime(2026, 8, 22, tzinfo=UTC)))
+    assert repo.unresolved_escalations(HID) == []
+    assert len(repo._query_prefix(HID, "ESCALATION#")) == 1

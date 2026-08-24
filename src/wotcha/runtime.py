@@ -64,7 +64,17 @@ def _tell_the_cook(repo: Repository, household_id: str, week_start: date) -> int
     """
     open_rows = repo.unresolved_escalations(household_id)
     same_week = [r for r in open_rows if r.get("week_start") == week_start.isoformat()]
-    rows = same_week or open_rows
+    # The fallback is for rows that name no week at all -- `escalate` records
+    # `ctx.week_start`, which can be None -- and only those. It used to fall
+    # back to every open row, which was harmless while a published week left
+    # its question open anyway. It is not harmless now: `retirement` and
+    # `new_constraint` questions stay open permanently by design (nothing can
+    # know they were settled), so the old fallback would hand the cook a
+    # months-old retirement question on any run that failed to publish
+    # without escalating -- an exhausted attempt cap, a crash -- labelled with
+    # the wrong week.
+    weekless = [r for r in open_rows if not r.get("week_start")]
+    rows = same_week or weekless
     if not rows or any(r.get("notified_at") for r in rows):
         return 0
     return notify_escalation(repo, household_id, rows[0], get_channel())
