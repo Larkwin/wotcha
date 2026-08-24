@@ -18,15 +18,36 @@ from strands.models import BedrockModel
 #   WOTCHA_PREFLIGHT_REGION=us-east-1 python scripts/preflight_bedrock.py
 REGION = os.environ.get("WOTCHA_PREFLIGHT_REGION", "ca-central-1")
 
-# Verified reachable 2026-08-20 unless noted. Bare ids (no us./global. prefix)
-# are rejected -- that is why none appear here.
+# How a model must be named depends on its `inferenceTypesSupported`, and
+# there is no rule of thumb that covers both cases:
+#
+#   ON_DEMAND         -- the bare model id works. `deepseek.v3.2` and
+#                        `qwen.qwen3-32b-v1:0` are this, in us-east-1.
+#   INFERENCE_PROFILE -- the bare id is refused with "Invocation of model ID
+#                        ... with on-demand throughput isn't supported", and
+#                        you must name a profile: us./global./ca./eu./apac.
+#
+# That second error reads like an availability problem and is not one.
+# `amazon.nova-lite-v1:0` sat in this list annotated "us-east-1 only" for
+# exactly that reason, while `ca.amazon.nova-lite-v1:0` was ACTIVE in the
+# product region the whole time. list_profiles() below exists so that is
+# discoverable rather than guessed at -- list_foundation_models returns bare
+# ids and can never show you a profile id.
+#
+# Every annotation here was checked against list-inference-profiles and
+# list-foundation-models on 2026-08-24. "Absent" means no profile and no
+# on-demand model of that name exists in the region named.
 CANDIDATES = [
     "us.anthropic.claude-sonnet-4-6",                 # working ceiling
     "us.anthropic.claude-haiku-4-5-20251001-v1:0",    # cheap frontier
-    "us.anthropic.claude-opus-5",                     # agreement-gated; expected to fail
-    "deepseek.v3.2",                                  # us-east-1 only
-    "qwen.qwen3-32b-v1:0",                            # us-east-1 only
-    "amazon.nova-lite-v1:0",                          # us-east-1 only
+    # Profile is ACTIVE in ca-central-1; the *account* lacks model access, so
+    # this fails with AccessDenied rather than ValidationException. The fix is
+    # Bedrock console -> Model access, not a different identifier.
+    "us.anthropic.claude-opus-5",
+    "ca.amazon.nova-lite-v1:0",                       # in-region; profile-only
+    "global.amazon.nova-2-lite-v1:0",                 # in-region; profile-only
+    "deepseek.v3.2",                                  # on-demand, us-east-1 only
+    "qwen.qwen3-32b-v1:0",                            # on-demand, us-east-1 only
 ]
 
 
@@ -42,7 +63,32 @@ def list_available() -> None:
     for m in models:
         mid = m["modelId"]
         if any(p in mid for p in ("anthropic", "deepseek", "qwen", "llama", "mistral")):
-            print(f"    {mid}")
+            # The inference type is the whole point of printing this: it says
+            # whether the bare id above is usable as-is (ON_DEMAND) or whether
+            # you need a profile id from the next section instead.
+            types = ",".join(m.get("inferenceTypesSupported") or ["-"])
+            print(f"    {mid}  [{types}]")
+
+
+def list_profiles() -> None:
+    """Print the inference profiles this region offers.
+
+    This is the half that was missing, and its absence is why a model that was
+    ACTIVE here got annotated "us-east-1 only". `list_foundation_models`
+    returns bare model ids, and a bare id is exactly what cannot be invoked --
+    so the discovery half of this script was looking at a list that could
+    never contain a usable identifier. These are the ids that belong in
+    CANDIDATES.
+    """
+    bedrock = boto3.client("bedrock", region_name=REGION)
+    try:
+        profiles = bedrock.list_inference_profiles()["inferenceProfileSummaries"]
+    except ClientError as exc:
+        print(f"  !! list_inference_profiles failed: {exc}")
+        return
+    print(f"  {len(profiles)} inference profiles in {REGION}:")
+    for p in sorted(profiles, key=lambda x: x["inferenceProfileId"]):
+        print(f"    {p['inferenceProfileId']}  {p['status']}")
 
 
 def try_model(model_id: str) -> tuple[bool, str]:
@@ -60,6 +106,8 @@ def main() -> int:
     print(f"Region: {REGION}\n")
     print("Catalogue:")
     list_available()
+    print("\nInference profiles:")
+    list_profiles()
     print("\nRound-trip tests:")
     working = []
     for model_id in CANDIDATES:
