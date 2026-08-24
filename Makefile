@@ -63,6 +63,7 @@ build-lambda: $(VENV)
 		--quiet
 	cp -r src/wotcha build/web/wotcha
 	cp lambdas/scheduler.py build/web/scheduler.py
+	cp lambdas/liaison.py build/web/liaison.py
 
 # infra/stack.py reads these three from the environment, and every one of
 # them fails *quietly* when absent: no WOTCHA_RUNTIME_ROLE_ARN silently

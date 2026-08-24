@@ -57,6 +57,7 @@ class WotchaStack(Stack):
         from aws_cdk import aws_sns as sns
         from aws_cdk import aws_sns_subscriptions as subs
         from aws_cdk import aws_sqs as sqs
+        from aws_cdk.aws_lambda_event_sources import SqsEventSource
 
         # No default. "demo" is the public sample household in
         # data/household.json, and defaulting to it points the runtime and the
@@ -341,6 +342,40 @@ class WotchaStack(Stack):
         # delivery strips. "No" followed by "actually yes", arriving reversed,
         # is an ordinary household outcome rather than a hypothetical.
         inbound_topic.add_subscription(subs.SqsSubscription(inbound))
+
+        # The consumer. Nothing else reads this queue, and a queue nobody
+        # reads holds messages until they expire -- the family texts, the
+        # message lands, and it is never seen.
+        liaison_fn = lambda_.Function(
+            self, "Liaison",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="liaison.handler",
+            code=code,
+            # One Bedrock call per record, on a small model. Generous enough
+            # that a slow response is not a redelivery.
+            timeout=Duration.seconds(60),
+            memory_size=512,
+            environment={
+                **common_env,
+                "WOTCHA_LIAISON_MODEL_ID": os.environ.get(
+                    "WOTCHA_LIAISON_MODEL_ID", "ca.amazon.nova-lite-v1:0"
+                ),
+            },
+        )
+        self.table.grant_read_write_data(liaison_fn)
+        # Its entire job is one model call. Without this the first real
+        # message fails with AccessDenied -- exactly how the runtime's SMS
+        # grant was found, and for exactly the same reason: a permission that
+        # only matters on a real run.
+        liaison_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["bedrock:InvokeModel"],
+            resources=["*"],
+        ))
+        # batch_size 1: a failure redelivers the whole batch, and every
+        # message in a redelivered batch is read by the model again. One
+        # record per invocation means one bad message cannot cost re-reads of
+        # its neighbours.
+        liaison_fn.add_event_source(SqsEventSource(inbound, batch_size=1))
 
         CfnOutput(self, "WebUrl", value=url.url)
         # The value that goes into `update-phone-number --two-way-channel-arn`.
