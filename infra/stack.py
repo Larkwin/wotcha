@@ -55,6 +55,8 @@ class WotchaStack(Stack):
         from aws_cdk import aws_lambda as lambda_
         from aws_cdk import aws_scheduler as scheduler
         from aws_cdk import aws_sns as sns
+        from aws_cdk import aws_sns_subscriptions as subs
+        from aws_cdk import aws_sqs as sqs
 
         # No default. "demo" is the public sample household in
         # data/household.json, and defaulting to it points the runtime and the
@@ -263,7 +265,94 @@ class WotchaStack(Stack):
             ),
         ).add_alarm_action(cw_actions.SnsAction(alarms))
 
+        # --- inbound SMS ----------------------------------------------
+        #
+        # The transport for M2's Liaison. Proven by hand on 2026-08-24 (a text
+        # from a verified handset landed in the queue) and moved here so it is
+        # reproducible, diffable, and not one person's shell history.
+        #
+        # Shape: inbound -> SNS topic -> SQS queue -> (later) the Liaison.
+        #
+        # SNS is not a preference. AWS accepts only an SNS topic or Connect
+        # Customer as a two-way destination; docs/two-way-sms-setup.md used to
+        # claim SQS worked, inferred from CLI help that says merely "the ARN of
+        # the two way channel". The queue is still here, behind the topic,
+        # because the reason for wanting it stands: this is a side project
+        # built in bursts, and a teenager texting on a Tuesday while the
+        # Liaison is mid-refactor should find their message waiting rather
+        # than discarded. SNS alone delivers once and forgets.
+        #
+        # The names are the ones the hand-built resources already had, on
+        # purpose. SQS and SNS ARNs are derived from the name, so recreating
+        # them here yields byte-identical ARNs -- which means the phone
+        # number's TwoWayChannelArn keeps resolving and never has to be
+        # re-pointed.
+        inbound_dlq = sqs.Queue(
+            self, "InboundDlq",
+            queue_name="wotcha-inbound-dlq",
+            # A message reaches this queue only after five failed deliveries,
+            # so by definition every item in it is something that went wrong
+            # and nobody has looked at yet. Same reasoning as the table.
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+
+        inbound = sqs.Queue(
+            self, "Inbound",
+            queue_name="wotcha-inbound",
+            # Household data: a family member's actual words, not yet read by
+            # anything. A stack mistake must not eat them -- and note the
+            # trade-off this shares with the table, that a destroyed stack
+            # leaves the queue behind and the next deploy then fails on the
+            # name. That is the intended direction to fail in.
+            removal_policy=RemovalPolicy.RETAIN,
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=5, queue=inbound_dlq,
+            ),
+        )
+
+        inbound_topic = sns.Topic(
+            self, "InboundTopic",
+            # Standard, not FIFO: AWS does not support FIFO topics as a
+            # two-way SMS destination.
+            topic_name="wotcha-inbound",
+            display_name="Wotcha inbound",
+        )
+
+        # SourceAccount/SourceArn are AWS's recommended confused-deputy guard.
+        # Without them this statement lets End User Messaging publish to this
+        # topic on behalf of any account, not just ours.
+        inbound_topic.add_to_resource_policy(iam.PolicyStatement(
+            sid="AllowEndUserMessagingPublish",
+            principals=[iam.ServicePrincipal("sms-voice.amazonaws.com")],
+            actions=["sns:Publish"],
+            resources=[inbound_topic.topic_arn],
+            conditions={
+                "StringEquals": {"aws:SourceAccount": self.account},
+                "ArnLike": {
+                    "aws:SourceArn": f"arn:aws:sms-voice:{self.region}:{self.account}:*"
+                },
+            },
+        ))
+
+        # raw_message_delivery deliberately left at its default of False. The
+        # inbound payload carries no timestamp of its own, inbound SMS has no
+        # ordering guarantee across carrier networks, and AWS's guidance is to
+        # approximate ordering from the SNS notification metadata -- which raw
+        # delivery strips. "No" followed by "actually yes", arriving reversed,
+        # is an ordinary household outcome rather than a hypothetical.
+        inbound_topic.add_subscription(subs.SqsSubscription(inbound))
+
         CfnOutput(self, "WebUrl", value=url.url)
+        # The value that goes into `update-phone-number --two-way-channel-arn`.
+        # That call is deliberately NOT made from this stack: the only
+        # CloudFormation resource for it would take ownership of the family's
+        # live long code, and a stack mistake could then release a number that
+        # took a support process to obtain and is verified as an origination
+        # identity. Left out, a deploy cannot revoke two-way -- the reverse of
+        # the usual risk here -- and the setting survives because this ARN is
+        # derived from the topic name and therefore stable.
+        CfnOutput(self, "InboundTopicArn", value=inbound_topic.topic_arn)
+        CfnOutput(self, "InboundQueueUrl", value=inbound.queue_url)
         # Named so the subscription can be added by hand without hunting for
         # it in the console.
         CfnOutput(self, "AlarmsTopicArn", value=alarms.topic_arn)

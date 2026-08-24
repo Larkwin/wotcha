@@ -10,14 +10,14 @@ being done yet.
 | | |
 |---|---|
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
-| Suite | 288 tests, lint clean, Python 3.12 and 3.14 |
+| Suite | 297 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
 | Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
 | Weekly schedule | `cron(0 9 ? * SAT *)` America/Toronto, **DISABLED** — first kickoff is manual, by choice |
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
-| Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ. Not yet in CDK |
+| Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ, in CDK. No consumer yet |
 | SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
 ## Done
@@ -152,11 +152,11 @@ real week has been planned, published and texted.
    attribution, and the Liaison itself. `Suggestion` is already defined and
    waiting for it.
 
-   First chore, before any of that: **the inbound resources exist in the
-   account but not in `infra/stack.py`.** They were created by hand to prove
-   the path. Until they are in the stack they are undeployable and invisible
-   to `cdk diff` — the same silently-revoking class the deploy guard exists
-   for.
+   The transport is in `infra/stack.py` as of 2026-08-24. It needs a one-time
+   cutover before the next deploy — the hand-built queues and topic still own
+   those names and CloudFormation will refuse to create over them. Delete
+   them, wait 60s, deploy: the recreated ARNs are identical, so the phone
+   number needs no change. Steps in `docs/two-way-sms-setup.md`.
 2. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
    differentiator, and the only milestone genuinely gated on accumulated
    history.

@@ -193,16 +193,56 @@ aws sqs receive-message --region ca-central-1 \
 A body containing `originationNumber` and `messageBody` is the proof. That is
 what settled the sandbox question, and nothing short of it would have.
 
-## Still to do — move it into CDK
+## Now in CDK
 
-The commands above proved the path. The queues, the topic, both policies, the
-subscription, and a Lambda event-source mapping belong in `infra/stack.py` so
-the whole thing is reproducible for judges — the submission requires setup
-instructions that actually work. Do this as part of M2, not as a separate chore.
+The queues, the topic, both policies and the subscription live in
+`infra/stack.py` under the same names, so the whole transport is reproducible
+from a clone. No Lambda event-source mapping yet — there is no Liaison to point
+it at.
 
-Note that the resources now exist in the account but not in the stack, so the
-first CDK pass has to either import them or use different names and retire these
-by hand.
+**The names are load-bearing.** An SQS or SNS ARN is derived from its name, and
+the phone number's `TwoWayChannelArn` names the topic by ARN. Rename the topic
+and inbound stops silently: the number goes on publishing to an ARN that no
+longer resolves, nothing errors, and the first symptom is somebody saying nobody
+answered. `tests/test_inbound_stack.py` pins the names for that reason.
+
+### The one-time cutover from the hand-built resources
+
+The proving run created these by hand, so CloudFormation does not own them yet
+and will refuse to create resources whose names exist. Delete them first; the
+recreated ones get identical ARNs, so **the phone number needs no change**:
+
+```bash
+REGION=ca-central-1
+aws sns delete-topic --region $REGION --topic-arn <topic arn>
+aws sqs delete-queue --region $REGION --queue-url <queue url>
+aws sqs delete-queue --region $REGION --queue-url <dlq url>
+# AWS enforces a 60-second wait before a deleted queue name can be reused.
+sleep 60
+```
+
+Then a normal `make deploy`, stating all four variables as usual. Inbound is
+dark for about a minute, and nothing consumes it yet.
+
+Confirm afterwards that two-way still resolves, and re-run the end-to-end test —
+a text from a verified handset landing in the queue is the only thing that
+proves the recreated resources are wired to the number:
+
+```bash
+aws pinpoint-sms-voice-v2 describe-phone-numbers --region $REGION \
+  --query 'PhoneNumbers[].[PhoneNumber,TwoWayEnabled,TwoWayChannelArn]' --output table
+```
+
+### The phone number is deliberately not a stack resource
+
+`AWS::PinpointSMSVoiceV2::PhoneNumber` exists, and using it would put the
+family's live long code under CloudFormation — where a stack mistake could
+release a number that took a support process to obtain and is verified as an
+origination identity. Left out, a deploy cannot revoke two-way at all, which is
+the reverse of the usual risk with this stack, and the setting survives every
+deploy because the topic ARN is stable.
+
+Enabling two-way therefore stays a documented one-time manual step, above.
 
 ## Sender attribution is the payload's real value
 
