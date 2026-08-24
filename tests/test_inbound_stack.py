@@ -96,3 +96,24 @@ def test_the_phone_number_itself_is_not_a_stack_resource():
     """
     assert "PinpointSMSVoiceV2" not in CODE
     assert "CfnPhoneNumber" not in CODE
+
+
+def test_the_consumer_is_wired_to_the_inbound_queue():
+    """A queue with no consumer holds messages until they expire. The family
+    would text, the message would land, and nothing would ever read it."""
+    assert 'self, "Liaison",' in CODE
+    assert 'handler="liaison.handler"' in CODE
+    assert "SqsEventSource(inbound" in CODE
+
+
+def test_the_consumer_can_reach_bedrock():
+    """Its whole job is one model call. Without this grant the first real
+    message fails with AccessDenied -- the same failure mode as the SMS grant
+    in the M1 addendum, discovered the same way."""
+    assert "bedrock:InvokeModel" in CODE
+
+
+def test_the_consumer_batches_small():
+    """A batch failure redelivers the whole batch, so every message in it is
+    re-read by the model. Small batches bound what one bad record costs."""
+    assert "batch_size=" in CODE
