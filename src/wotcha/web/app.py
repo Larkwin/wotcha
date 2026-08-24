@@ -367,11 +367,19 @@ def handler(event: dict, _context) -> dict:
 
     if route == "w" and method == "GET":
         week = _week_to_show(repo, household_id, local_today())
-        if week is None:
-            return _resp(200, "<p>No week planned yet. Check back soon.</p>")
         meals = {m.meal_id: m for m in repo.list_meals(household_id)}
-        outcomes = repo.outcomes_for_week(household_id, week.week_start)
         suggestions = repo.list_suggestions(household_id)
+        if week is None:
+            # A sender's feedback loop does not depend on the Planner having
+            # run. v1 sends nothing back over SMS, so this page is the only
+            # sign a text arrived at all -- tying that to a published week
+            # would make an unplanned week look like a lost message, hitting
+            # hardest on a brand-new household whose first act is a text
+            # before any week exists.
+            body = ("<p>No week planned yet. Check back soon.</p>"
+                    + _suggestions_html(suggestions, meals, token, member.is_cook))
+            return _resp(200, body)
+        outcomes = repo.outcomes_for_week(household_id, week.week_start)
         return _resp(200, _page(member, week, meals, token, outcomes,
                                 local_today(), suggestions))
 
