@@ -668,3 +668,29 @@ def test_a_family_member_sees_their_own_suggestion_waiting(seeded):
     body = app.handler(req("GET", f"/w/{make_token(HID, 'riley', SECRET)}"),
                        None)["body"]
     assert "can we have poutine" in body
+
+
+def test_a_suggestion_survives_the_no_week_page(seeded):
+    """The feedback loop does not depend on the Planner having run. This is
+    the state a brand-new household is in on day one -- text first, plan
+    later -- and it must not read as a lost message."""
+    seeded._table.delete_item(Key=keys.week_key(HID, _current_monday()))
+    _pending(seeded)
+    body = app.handler(req("GET", f"/w/{make_token(HID, 'riley', SECRET)}"),
+                       None)["body"]
+    assert "No week planned yet" in body
+    assert "can we have poutine" in body
+
+
+def test_the_no_week_page_still_gates_approval_controls_by_cook(seeded):
+    seeded._table.delete_item(Key=keys.week_key(HID, _current_monday()))
+    sid, _ts = _pending(seeded)
+    cook_body = app.handler(req("GET", f"/w/{make_token(HID, 'maya', SECRET)}"),
+                            None)["body"]
+    assert f'value="{sid}"' in cook_body
+    assert "add as candidate" in cook_body
+
+    non_cook_body = app.handler(req("GET", f"/w/{make_token(HID, 'riley', SECRET)}"),
+                                None)["body"]
+    assert "add as candidate" not in non_cook_body
+    assert "waiting for the cook" in non_cook_body
