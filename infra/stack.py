@@ -18,7 +18,16 @@ class WotchaStack(Stack):
             # One household of dinners is a rounding error; retain it so a bad
             # deploy never destroys the backfilled history the Curator needs.
             removal_policy=RemovalPolicy.RETAIN,
-            point_in_time_recovery=True,
+            # The `point_in_time_recovery=True` shorthand is deprecated and
+            # goes away in the next CDK major. This is the same synthesized
+            # PointInTimeRecoverySpecification, verified by diffing the
+            # template before and after -- which matters more than usual here,
+            # because this table holds the family's real history and is
+            # RETAIN: a property change that CloudFormation treated as a
+            # replacement would orphan it.
+            point_in_time_recovery_specification=ddb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=True
+            ),
         )
 
         self.link_secret = sm.Secret(
