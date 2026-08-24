@@ -17,6 +17,7 @@ being done yet.
 | Weekly schedule | `cron(0 9 ? * SAT *)` America/Toronto, **DISABLED** — first kickoff is manual, by choice |
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
+| Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ. Not yet in CDK |
 | SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
 ## Done
@@ -99,6 +100,23 @@ real week has been planned, published and texted.
   INSUFFICIENT_DATA on the next quiet day; and **`ca-central-1`**, because
   AWS's own spending-alarm walkthrough says to switch to `us-east-1`, which
   is true for `AWS/Billing` and wrong for this regional namespace.
+- **Inbound SMS proven in the sandbox.** The M2 structural gate, and it was
+  the one thing nobody could answer from documentation: every stated sandbox
+  restriction is outbound and spend, which is absence of mention rather than a
+  guarantee. Two-way was enabled on the long code and a text from a verified
+  handset landed in the queue. No production access needed.
+
+  It also corrected `docs/two-way-sms-setup.md` on its central point. That
+  document said `--two-way-channel-arn` accepts an SQS queue; AWS accepts only
+  an SNS topic or Connect Customer. The claim came from CLI help that says
+  merely "the ARN of the two way channel" — an inference written down as a
+  fact, of exactly the kind the Nova model id turned out to be. The shape is
+  now inbound → SNS topic → SQS queue → Liaison, which keeps every durability
+  property the original reasoning wanted. Two smaller corrections came with
+  it: no IAM role is needed (a topic policy suffices), and `RawMessageDelivery`
+  must stay off, because the inbound payload has no timestamp of its own and
+  the SNS envelope is the only thing that can approximate ordering on a
+  channel that guarantees none.
 - **Escalations resolve themselves.** `escalate` wrote `resolved: False`,
   `unresolved_escalations` read it, and nothing ever set it true — the first
   unsatisfiable week would have left a question open permanently. Resolution
@@ -126,13 +144,19 @@ real week has been planned, published and texted.
 
 ## Next — ordered
 
-1. **M2 — Liaison and two-way SMS.** The structural gate: inbound free-text
-   signals, suggestions, disruption capture and "what's for dinner tonight?"
-   all arrive through it. Needs the SQS queue, DLQ and IAM role in
-   `docs/two-way-sms-setup.md`; the existing long code is already the right
-   number. **Verify inbound works in the sandbox** — the documented
-   restrictions are all outbound and spend, but that is absence of mention,
-   not a guarantee.
+1. **M2 — Liaison.** The structural gate: inbound free-text signals,
+   suggestions, disruption capture and "what's for dinner tonight?" all arrive
+   through it. **The transport is done** — inbound is live and messages are
+   landing in `wotcha-inbound`; see `docs/two-way-sms-setup.md`. What is left
+   is the consumer: a Lambda on the queue, sender-number-to-`Member`
+   attribution, and the Liaison itself. `Suggestion` is already defined and
+   waiting for it.
+
+   First chore, before any of that: **the inbound resources exist in the
+   account but not in `infra/stack.py`.** They were created by hand to prove
+   the path. Until they are in the stack they are undeployable and invisible
+   to `cdk diff` — the same silently-revoking class the deploy guard exists
+   for.
 2. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
    differentiator, and the only milestone genuinely gated on accumulated
    history.
