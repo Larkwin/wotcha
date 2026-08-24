@@ -425,3 +425,101 @@ def test_unknown_action_fails_loudly(seeded, monkeypatch):
     monkeypatch.setattr(runtime, "_repo", lambda: seeded)
     result = runtime.invoke({"action": "levitate"})
     assert result == {"ok": False, "error": "unknown action: levitate"}
+
+
+# --- which open question the cook is handed ------------------------------
+
+
+def _open_row(reason: str, question: str, ts: str, week_start):
+    return {"record_id": ts[-4:], "timestamp": ts, "reason": reason,
+            "question": question, "resolved": False, "week_start": week_start}
+
+
+def _failing_planner(*, repo, household_id, week_start, model_id, region):
+    """A run that publishes nothing and escalates nothing -- an exhausted
+    attempt cap, or a crash inside the agent loop. This is the only path on
+    which the fallback below is reachable."""
+    return {"published": False, "escalated": False, "attempts": 6, "text": "gave up"}
+
+
+def test_a_stale_retirement_question_is_not_sent_as_this_weeks(monkeypatch, seeded):
+    """Retirement questions stay open permanently by design -- nothing in the
+    system can know one was settled. So the fallback that used to reach for
+    *any* open row would hand the cook a months-old question about tacos when
+    a run failed to publish without escalating, labelled with a week that has
+    nothing to do with it."""
+    seeded.put_escalation(HID, _open_row("retirement", "Retire tacos?",
+                                         "2026-06-01T09:00:00+00:00", "2026-06-01"))
+    channel = ConsoleChannel()
+    monkeypatch.setattr(runtime, "_repo", lambda: seeded)
+    monkeypatch.setattr(runtime, "_secret", lambda: SECRET)
+    monkeypatch.setattr(runtime, "get_channel", lambda: channel)
+    monkeypatch.setattr(runtime, "run_planner", _failing_planner)
+
+    result = runtime.invoke({"action": "plan_and_notify", "week_start": "2026-08-24"})
+    assert result["escalated_to"] == 0
+    assert channel.sent == [], "an old retirement question was sent as this week's"
+
+
+def test_a_question_naming_no_week_is_still_reachable(monkeypatch, seeded):
+    """`escalate` records ctx.week_start, which can be None. Those rows are
+    what the fallback exists for -- narrowing it must not silence them, or a
+    real question would go nowhere."""
+    seeded.put_escalation(HID, _open_row("fence_unsatisfiable", "Which rule gives?",
+                                         "2026-08-22T09:00:00+00:00", None))
+    channel = ConsoleChannel()
+    monkeypatch.setattr(runtime, "_repo", lambda: seeded)
+    monkeypatch.setattr(runtime, "_secret", lambda: SECRET)
+    monkeypatch.setattr(runtime, "get_channel", lambda: channel)
+    monkeypatch.setattr(runtime, "run_planner", _failing_planner)
+
+    result = runtime.invoke({"action": "plan_and_notify", "week_start": "2026-08-24"})
+    assert result["escalated_to"] == 1
+    assert len(channel.sent) == 1
+
+
+def test_this_weeks_question_still_wins_over_a_weekless_one(monkeypatch, seeded):
+    """Both kinds open at once: the one about the week being planned is the
+    one the cook needs today."""
+    seeded.put_escalation(HID, _open_row("fence_unsatisfiable", "Old weekless?",
+                                         "2026-08-01T09:00:00+00:00", None))
+    seeded.put_escalation(HID, _open_row("fence_unsatisfiable", "This week?",
+                                         "2026-08-22T09:00:00+00:00", "2026-08-24"))
+    channel = ConsoleChannel()
+    monkeypatch.setattr(runtime, "_repo", lambda: seeded)
+    monkeypatch.setattr(runtime, "_secret", lambda: SECRET)
+    monkeypatch.setattr(runtime, "get_channel", lambda: channel)
+    monkeypatch.setattr(runtime, "run_planner", _failing_planner)
+
+    runtime.invoke({"action": "plan_and_notify", "week_start": "2026-08-24"})
+    assert "This week?" in channel.sent[0][1]
+
+
+def test_a_resolved_week_frees_the_cook_from_being_reasked(monkeypatch, seeded):
+    """The end-to-end shape. A week escalates and the cook is told; the fence
+    is fixed and the week publishes, which answers it; a later unsatisfiable
+    week asks a fresh question rather than being suppressed by the old
+    already-notified row."""
+    seeded.put_escalation(HID, _open_row("fence_unsatisfiable", "Week one?",
+                                         "2026-08-15T09:00:00+00:00", "2026-08-17"))
+    row = seeded.unresolved_escalations(HID)[0]
+    seeded.mark_escalation_notified(HID, row["sk"])
+    seeded.put_week(Week(household_id=HID, week_start=date(2026, 8, 17),
+                         published_at=datetime(2026, 8, 15, tzinfo=UTC)))
+    assert seeded.unresolved_escalations(HID) == []
+
+    def escalating_planner(*, repo, household_id, week_start, model_id, region):
+        agent_context.set_context(repo=repo, household_id=household_id,
+                                  model_id=model_id, week_start=week_start)
+        pt.escalate("fence_unsatisfiable", "Week two?")
+        return {"published": False, "escalated": True, "attempts": 6, "text": "no"}
+
+    channel = ConsoleChannel()
+    monkeypatch.setattr(runtime, "_repo", lambda: seeded)
+    monkeypatch.setattr(runtime, "_secret", lambda: SECRET)
+    monkeypatch.setattr(runtime, "get_channel", lambda: channel)
+    monkeypatch.setattr(runtime, "run_planner", escalating_planner)
+
+    result = runtime.invoke({"action": "plan_and_notify", "week_start": "2026-08-24"})
+    assert result["escalated_to"] == 1
+    assert "Week two?" in channel.sent[0][1]

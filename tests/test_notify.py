@@ -356,7 +356,12 @@ def test_escalation_goes_to_cooks_only_and_stamps_the_row(seeded):
     seeded.put_escalation(HID, {
         "record_id": "abc123", "timestamp": "2026-08-22T13:00:00+00:00",
         "reason": "fence_unsatisfiable", "question": "Which tradition gives?",
-        "resolved": False, "week_start": "2026-08-24",
+        # A week the fixture has NOT published. These tests are about who gets
+        # the message and when the row is stamped -- but a fence question
+        # naming a published week resolves itself (domain/escalations.py), so
+        # naming WEEK's own date here would leave nothing open to notify about
+        # and the test would fail for a reason that has nothing to do with it.
+        "resolved": False, "week_start": "2026-08-31",
     })
     row = seeded.latest_unresolved_escalation(HID)
     channel = ConsoleChannel()
@@ -374,7 +379,12 @@ def test_escalation_that_reaches_nobody_is_not_stamped(seeded):
     seeded.put_escalation(HID, {
         "record_id": "abc123", "timestamp": "2026-08-22T13:00:00+00:00",
         "reason": "fence_unsatisfiable", "question": "Which tradition gives?",
-        "resolved": False, "week_start": "2026-08-24",
+        # A week the fixture has NOT published. These tests are about who gets
+        # the message and when the row is stamped -- but a fence question
+        # naming a published week resolves itself (domain/escalations.py), so
+        # naming WEEK's own date here would leave nothing open to notify about
+        # and the test would fail for a reason that has nothing to do with it.
+        "resolved": False, "week_start": "2026-08-31",
     })
     row = seeded.latest_unresolved_escalation(HID)
 
