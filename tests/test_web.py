@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
+from urllib.parse import quote
 
 import boto3
 import pytest
@@ -14,6 +15,8 @@ from wotcha.domain.models import (
     Slot,
     SlotOutcome,
     Substitute,
+    Suggestion,
+    SuggestionStatus,
     Week,
 )
 from wotcha.store import keys
@@ -557,3 +560,111 @@ def test_a_person_token_is_not_a_public_page(seeded):
 def test_the_public_page_is_read_only_by_method(seeded):
     resp = app.handler(req("POST", f"/p/{make_public_token(HID, SECRET)}", ""), None)
     assert resp["statusCode"] == 404
+
+
+def _sugg_body(sid: str, ts: str, action: str, name: str = "") -> str:
+    parts = [f"suggestion_id={sid}", f"created_at={quote(ts)}", f"action={action}"]
+    if name:
+        parts.append(f"proposed_name={quote(name)}")
+    return "&".join(parts)
+
+
+def _pending(seeded, text="can we have poutine", sid="m1",
+             ts="2026-08-24T18:03:00+00:00", **over):
+    seeded.put_suggestion(HID, Suggestion(
+        household_id=HID, suggestion_id=sid, person_id="riley", text=text,
+        created_at=datetime.fromisoformat(ts), proposed_name="Poutine", **over))
+    return sid, ts
+
+
+def test_a_cook_approving_creates_a_candidate_meal(seeded):
+    """Not SAFE and not AUDITIONING. A candidate is on the roster and not
+    plannable -- get_safe_list returns neither it nor anything else the
+    household has not decided to actually try."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)  # maya is the cook
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve", "Poutine")), None)
+    assert resp["statusCode"] == 303
+    meal = next(m for m in seeded.list_meals(HID) if m.meal_id == "poutine")
+    assert meal.status is MealStatus.CANDIDATE
+    assert meal.name == "Poutine"
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.APPROVED
+
+
+def test_a_non_cook_cannot_approve(seeded):
+    """The buck stops with the cook. Hiding the control is presentation;
+    refusing the request is the actual rule."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "riley", SECRET)  # riley is not a cook
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve", "Poutine")), None)
+    assert resp["statusCode"] == 403
+    assert not any(m.meal_id == "poutine" for m in seeded.list_meals(HID))
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.PENDING
+
+
+def test_declining_records_the_decision_without_touching_the_roster(seeded):
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    app.handler(req("POST", f"/s/{token}", _sugg_body(sid, ts, "decline")), None)
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.DECLINED
+    assert not any(m.meal_id == "poutine" for m in seeded.list_meals(HID))
+
+
+def test_the_cook_can_rename_on_approval(seeded):
+    """The agent proposed a name; the cook is the one who decides it. Whatever
+    they type is what gets created."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    app.handler(req("POST", f"/s/{token}",
+                    _sugg_body(sid, ts, "approve", "Poutine Night")), None)
+    assert any(m.name == "Poutine Night" for m in seeded.list_meals(HID))
+
+
+def test_approving_without_a_name_is_refused(seeded):
+    """A meal with no name renders as a bare id on the family's page."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve")), None)
+    assert resp["statusCode"] == 400
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.PENDING
+
+
+def test_approving_a_name_the_household_already_has_is_refused(seeded):
+    """Chili already exists. Silently overwriting it would rewrite a Safe Meal
+    -- including its status -- from a suggestion form."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve", "Chili")), None)
+    assert resp["statusCode"] == 400
+    assert next(m for m in seeded.list_meals(HID)
+                if m.meal_id == "chili").status is MealStatus.SAFE
+
+
+def test_a_suggestion_that_does_not_exist_is_a_404(seeded):
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body("nope", "2026-08-24T18:03:00+00:00",
+                                      "approve", "X")), None)
+    assert resp["statusCode"] == 404
+
+
+def test_a_suggestion_body_is_escaped_on_the_page(seeded):
+    """Untrusted text from a person, rendered on a web page."""
+    _pending(seeded, text="<script>alert(1)</script>")
+    token = make_token(HID, "maya", SECRET)
+    body = app.handler(req("GET", f"/w/{token}"), None)["body"]
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+def test_a_family_member_sees_their_own_suggestion_waiting(seeded):
+    """The only feedback loop there is -- v1 sends nothing back. Without this
+    a text vanishes into silence and the sender assumes it is broken."""
+    _pending(seeded)
+    body = app.handler(req("GET", f"/w/{make_token(HID, 'riley', SECRET)}"),
+                       None)["body"]
+    assert "can we have poutine" in body
