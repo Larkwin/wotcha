@@ -17,7 +17,7 @@ being done yet.
 | Weekly schedule | `cron(0 9 ? * SAT *)` America/Toronto, **DISABLED** — first kickoff is manual, by choice |
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
-| Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ, in CDK. No consumer yet |
+| Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ, in CDK. Consumer: Liaison Lambda |
 | Liaison | inbound → `SUGGESTION#` → cook's page, deployed. **Never exercised on a real message.** |
 | SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
@@ -34,7 +34,7 @@ real week has been planned, published and texted.
 
 **Since M1:**
 
-- **The Liaison is live, and it only ever proposes.** An inbound text from a
+- **The Liaison is deployed, and it only ever proposes.** An inbound text from a
   known member becomes one `SUGGESTION#` row; the cook approves it on their
   page and approval creates a `Meal` with `status=CANDIDATE` — the status
   that had existed as the model default since M1 and never once been used.
@@ -178,19 +178,21 @@ real week has been planned, published and texted.
 
 ## Next — ordered
 
-1. **M2 — Liaison.** The structural gate: inbound free-text signals,
-   suggestions, disruption capture and "what's for dinner tonight?" all arrive
-   through it. **The transport is done** — inbound is live and messages are
-   landing in `wotcha-inbound`; see `docs/two-way-sms-setup.md`. What is left
-   is the consumer: a Lambda on the queue, sender-number-to-`Member`
-   attribution, and the Liaison itself. `Suggestion` is already defined and
-   waiting for it.
+1. **M2 — Liaison v1.5.** The Liaison transport and v1 (suggestions only) are
+   live. What is left of M2 is the second round of inbound: free-text
+   **signals** (what the household ate), **disruption capture** (takeout, skipped,
+   swapped), and **"what's for dinner tonight?"** — all deferred from v1 as too
+   risky or expensive.
 
-   The transport is in `infra/stack.py` and the cutover from the hand-built
-   resources is done — deleted, redeployed, and re-proven end to end with a
-   real text on 2026-08-24. A fresh clone gets the whole transport from
-   `make deploy`; only the phone number's two-way setting stays manual, and
-   `docs/two-way-sms-setup.md` says why.
+   **Signals and disruptions** need attribution that traces a correction to a
+   person and a night, not just classification. The agent cannot infer that
+   reliably. v1's `kind` label — recorded on every suggestion — is the data
+   point that will let v1.5 turn that on: once extraction accuracy is proven,
+   the inference risk is a known number, not a hope.
+
+   **"What's for dinner tonight?"** costs money; v1's budget is $1.00/month.
+   The feature goes in after rate limiting can cap the damage, or after the
+   Curator (M3) has proven enough adoption to justify a budget raise.
 2. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
    differentiator, and the only milestone genuinely gated on accumulated
    history.
