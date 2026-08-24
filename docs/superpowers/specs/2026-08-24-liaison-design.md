@@ -77,7 +77,12 @@ Three things this does that a pass-through cannot:
 **Matches against the existing roster.** "Can we have tacos" when Tacos is
 already a Safe Meal is not a new meal. The agent returns `matched="tacos"` and
 the cook sees a request for something already cooked rather than a duplicate
-roster entry. `get_safe_list` is the only tool it gets, and it is read-only.
+roster entry. **The agent has no tools.** The roster is rendered into the prompt instead.
+The Safe List is six or seven meals, so a tool-call round trip to fetch it is
+pure overhead — and tool calling is the weakest capability of the cheap models
+this is meant to run on. With no tools the agent has no mechanism to reach
+anything at all: it returns a value, and the consumer decides what to persist.
+That is a stronger guarantee than a read-only tool.
 
 **Does the typing.** The cook confirms a name instead of composing one. Without
 this the cook does the extraction by hand, which is the tedious half of the job.
