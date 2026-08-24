@@ -13,8 +13,12 @@ from botocore.exceptions import ClientError
 from strands import Agent
 from strands.models import BedrockModel
 
-# The product region. Override to us-east-1 to exercise the open-weight rungs,
-# which ca-central-1 does not offer at all:
+# The product region, and everything the ladder needs is in it. An earlier
+# version of this comment said to override to us-east-1 "to exercise the
+# open-weight rungs, which ca-central-1 does not offer at all" -- untrue.
+# Llama and Mistral are ON_DEMAND right here; only DeepSeek and Qwen are
+# genuinely us-east-1-only, and they are not the only open-weight models.
+# The override remains, for reaching those two specifically:
 #   WOTCHA_PREFLIGHT_REGION=us-east-1 python scripts/preflight_bedrock.py
 REGION = os.environ.get("WOTCHA_PREFLIGHT_REGION", "ca-central-1")
 
@@ -46,6 +50,15 @@ CANDIDATES = [
     "us.anthropic.claude-opus-5",
     "ca.amazon.nova-lite-v1:0",                       # in-region; profile-only
     "global.amazon.nova-2-lite-v1:0",                 # in-region; profile-only
+    # The open-weight rungs, on-demand in ca-central-1 -- no us-east-1 needed.
+    # `list_available` has matched "llama" and "mistral" since this script was
+    # written, so these printed on every preflight run and were never read.
+    # That is the same failure as the Nova entry: the identifier was on the
+    # screen and the annotation next to it said otherwise.
+    "meta.llama3-70b-instruct-v1:0",                  # open-weight large
+    "mistral.mixtral-8x7b-instruct-v0:1",             # open-weight MoE
+    # Genuinely us-east-1-only: no profile and no on-demand model of either
+    # name exists in ca-central-1. Reached with WOTCHA_PREFLIGHT_REGION.
     "deepseek.v3.2",                                  # on-demand, us-east-1 only
     "qwen.qwen3-32b-v1:0",                            # on-demand, us-east-1 only
 ]

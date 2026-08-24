@@ -12,11 +12,12 @@ being done yet.
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
 | Suite | 271 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
+| Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
 | Weekly schedule | `cron(0 9 ? * SAT *)` America/Toronto, **DISABLED** — first kickoff is manual, by choice |
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
-| SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50; topic needs a subscriber |
+| SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
 ## Done
 
@@ -35,6 +36,29 @@ real week has been planned, published and texted.
   rungs through Project Mantle, so §13 keeps all five rather than degrading to
   three. Note the catalogue does not list them; round-trip before concluding
   anything is unavailable.
+- **The ladder does not need us-east-1** (corrects the note above, 2026-08-24).
+  That note assumed the open-weight rungs were DeepSeek and Qwen, which are
+  genuinely us-east-1-only. They are not the only open-weight models: Llama
+  and Mistral are `ON_DEMAND` in `ca-central-1`. Four rungs now round-trip
+  from the product region — `us.anthropic.claude-sonnet-4-6`,
+  `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `ca.amazon.nova-lite-v1:0`
+  and `global.amazon.nova-2-lite-v1:0` — with `meta.llama3-70b-instruct-v1:0`
+  and `mistral.mixtral-8x7b-instruct-v0:1` added to the candidate list and not
+  yet round-tripped.
+
+  Two identifier bugs sat behind that. `amazon.nova-lite-v1:0` was annotated
+  "us-east-1 only" when `ca.amazon.nova-lite-v1:0` was ACTIVE in-region all
+  along: a profile-only model refuses its bare id with "on-demand throughput
+  isn't supported", which reads like absence. And `list_foundation_models`
+  returns bare ids, so the discovery half of `preflight_bedrock.py` could
+  never surface a profile id — it now prints inference profiles and each
+  model's `inferenceTypesSupported` alongside.
+
+  **The Llama and Mistral ids were never hidden.** `list_available` has
+  matched "llama" and "mistral" since the script was written, so they printed
+  on every run and nobody read them. Worth remembering the next time a
+  capability looks absent: check what is already on the screen before
+  concluding the region lacks it.
 - **Two-household split** — the committed `data/household.json` is a
   pseudonymous sample; the real household lives in an untracked file. The
   seeder takes a required `--file`, and refuses to create a household that
@@ -112,16 +136,16 @@ real week has been planned, published and texted.
 - **Hand-invoke the scheduler Lambda once.** Both IAM hops simulate as
   allowed, but simulation does not cover resource-based policies. Do it on a
   Monday or later, when it targets a week nobody was texted about.
-- **Subscribe an address to `wotcha-alarms`.** The topic and the alarm are
-  deployed; the subscription is not. CDK creates it unsubscribed on purpose —
-  an email subscription lands in the synthesized template and in the `make
-  deploy` line that gets pasted into runbooks, and this repo is public. Take
-  the `AlarmsTopicArn` output and:
-  `aws sns subscribe --region ca-central-1 --topic-arn <arn> --protocol email
-  --notification-endpoint <you>`, then click the confirmation link. **Until
-  it is confirmed the alarm fires into nothing** — `make preflight` says so
-  every time, and that is the only thing standing between this design and the
-  failure it was built to close.
+- **Enable Opus 5 model access** if §13 wants that rung. It is the only
+  candidate still failing, and it fails with `AccessDenied` rather than
+  `ValidationException` — the profile is ACTIVE in `ca-central-1`, so this is
+  account model access, not availability. Bedrock console → Model access.
+- **Re-subscribe if the alarm topic is ever recreated.** CDK creates
+  `wotcha-alarms` unsubscribed on purpose — an email subscription lands in the
+  synthesized template and in the `make deploy` line that gets pasted into
+  runbooks, and this repo is public. One address is confirmed as of
+  2026-08-24; `make preflight` reports the count on every run, and a topic
+  with no confirmed subscriber is an alarm that fires into nothing.
 - **Seed the demo household** if the public link should show anything:
   `--file data/household.json --new-household`.
 
