@@ -178,11 +178,12 @@ real week has been planned, published and texted.
 
 ## Next — ordered
 
-1. **M2 — Liaison v1.5.** The Liaison transport and v1 (suggestions only) are
-   live. What is left of M2 is the second round of inbound: free-text
-   **signals** (what the household ate), **disruption capture** (takeout, skipped,
-   swapped), and **"what's for dinner tonight?"** — all deferred from v1 as too
-   risky or expensive.
+1. **M2 — Liaison v1.5.** The Liaison transport is **live and proven** — a real
+   text landed in the queue on 2026-08-24. v1 is deployed and has never exercised
+   on a real message; `lambdas/liaison.py` writes `SUGGESTION#` rows. What is left
+   of M2 is the second round of inbound: free-text **signals** (what the household
+   ate), **disruption capture** (takeout, skipped, swapped), and **"what's for
+   dinner tonight?"** — all deferred from v1 as too risky or expensive.
 
    **Signals and disruptions** need attribution that traces a correction to a
    person and a night, not just classification. The agent cannot infer that
@@ -234,8 +235,10 @@ real week has been planned, published and texted.
 - **A mid-week manual `plan_week` makes the page show next week.** Right on a
   Saturday, wrong on a Wednesday. There is currently a published,
   never-notified week sitting one week out.
-- **`Suggestion` is defined and unused** — M2 vocabulary. A novel off-list
-  substitute is really a suggestion, and that is where it should land.
+- **A novel off-list substitute is not in `Suggestion`.** It is conceptually a
+  suggestion — someone names a meal on the `/o/` page and asks "what if we had
+  this instead?" — but it lands in `Outcome` rather than in the `Suggestion`
+  table designed for inbound. That design boundary is still open.
 - **A known substitute is not history the Planner can see.** `get_recent_weeks`
   now says a swapped night's planned meal was not eaten, but not what replaced
   it, so a named substitute can be planned again the following week as though
@@ -263,9 +266,12 @@ real week has been planned, published and texted.
 - **Single-tenant in execution.** Storage and the read path are multi-tenant;
   `runtime.py` reads one household id from the environment, so the scheduler
   plans for exactly one household however many exist. Deliberate for v1 —
-  see §16 — but new entry points should take `household_id` from the
-  invocation payload rather than settings, and that is cheapest before M2 adds
-  the Liaison.
+  see §16. The Liaison (`lambdas/liaison.py`) also reads from environment, not
+  from invocation payload, because SQS-triggered Lambda has no payload to carry
+  a household id. Multi-tenant inbound needs a different approach: the transport
+  already knows which number the text reached (`destinationNumber` is in the
+  SNS payload), so household is a number-to-household lookup, not a parameter
+  threaded through the Lambda chain.
 
 ## The sandbox, and what leaving it costs
 
