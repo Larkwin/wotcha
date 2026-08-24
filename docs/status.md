@@ -117,6 +117,18 @@ real week has been planned, published and texted.
   must stay off, because the inbound payload has no timestamp of its own and
   the SNS envelope is the only thing that can approximate ordering on a
   channel that guarantees none.
+- **The inbound transport is in CDK**, under the same names the hand-built
+  resources had. SQS and SNS ARNs are derived from their names, so recreating
+  them under CloudFormation produced identical ARNs and the phone number's
+  `TwoWayChannelArn` never had to be re-pointed. That also makes the names
+  load-bearing with no warning attached: `--two-way-channel-arn` is a setting
+  on the number, not a stack resource, so a rename would leave it publishing
+  to an ARN that no longer resolves — silently.
+  `tests/test_inbound_stack.py` pins the names, the retention, the
+  dead-letter wiring and the confused-deputy conditions. The phone number
+  itself is deliberately *not* a stack resource: putting a verified
+  origination identity under CloudFormation means a stack mistake could
+  release it.
 - **Escalations resolve themselves.** `escalate` wrote `resolved: False`,
   `unresolved_escalations` read it, and nothing ever set it true — the first
   unsatisfiable week would have left a question open permanently. Resolution
@@ -152,11 +164,11 @@ real week has been planned, published and texted.
    attribution, and the Liaison itself. `Suggestion` is already defined and
    waiting for it.
 
-   The transport is in `infra/stack.py` as of 2026-08-24. It needs a one-time
-   cutover before the next deploy — the hand-built queues and topic still own
-   those names and CloudFormation will refuse to create over them. Delete
-   them, wait 60s, deploy: the recreated ARNs are identical, so the phone
-   number needs no change. Steps in `docs/two-way-sms-setup.md`.
+   The transport is in `infra/stack.py` and the cutover from the hand-built
+   resources is done — deleted, redeployed, and re-proven end to end with a
+   real text on 2026-08-24. A fresh clone gets the whole transport from
+   `make deploy`; only the phone number's two-way setting stays manual, and
+   `docs/two-way-sms-setup.md` says why.
 2. **M3 — Curator.** Standings, decay detection, retirement, auditions. The
    differentiator, and the only milestone genuinely gated on accumulated
    history.

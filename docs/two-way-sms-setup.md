@@ -206,32 +206,23 @@ and inbound stops silently: the number goes on publishing to an ARN that no
 longer resolves, nothing errors, and the first symptom is somebody saying nobody
 answered. `tests/test_inbound_stack.py` pins the names for that reason.
 
-### The one-time cutover from the hand-built resources
+### The cutover from the hand-built resources — done 2026-08-24
 
-The proving run created these by hand, so CloudFormation does not own them yet
-and will refuse to create resources whose names exist. Delete them first; the
-recreated ones get identical ARNs, so **the phone number needs no change**:
+Historical, and kept because it explains why the names are what they are. **A
+fresh clone needs none of it**: `make deploy` creates the whole transport, and
+only the phone number's two-way setting is manual.
 
-```bash
-REGION=ca-central-1
-aws sns delete-topic --region $REGION --topic-arn <topic arn>
-aws sqs delete-queue --region $REGION --queue-url <queue url>
-aws sqs delete-queue --region $REGION --queue-url <dlq url>
-# AWS enforces a 60-second wait before a deleted queue name can be reused.
-sleep 60
-```
+The proving run created the topic and queues by hand, so CloudFormation did not
+own them and refused to create over the names. They were deleted, the 60 seconds
+AWS enforces before a queue name can be reused were waited out, and the stack
+recreated them. The ARNs came back identical, so the phone number needed no
+change — which was the whole reason for keeping the names.
 
-Then a normal `make deploy`, stating all four variables as usual. Inbound is
-dark for about a minute, and nothing consumes it yet.
-
-Confirm afterwards that two-way still resolves, and re-run the end-to-end test —
-a text from a verified handset landing in the queue is the only thing that
-proves the recreated resources are wired to the number:
-
-```bash
-aws pinpoint-sms-voice-v2 describe-phone-numbers --region $REGION \
-  --query 'PhoneNumbers[].[PhoneNumber,TwoWayEnabled,TwoWayChannelArn]' --output table
-```
+Verified end to end afterwards: a text from a verified handset landed in the
+recreated queue. That test is not optional and `describe-phone-numbers` is not a
+substitute for it — the phone number stores an ARN string and reports it back
+happily whether or not anything exists at the other end, which is precisely the
+failure a cutover can introduce.
 
 ### The phone number is deliberately not a stack resource
 
