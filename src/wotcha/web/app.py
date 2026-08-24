@@ -17,12 +17,15 @@ from wotcha.config import settings
 from wotcha.dates import local_today, monday_of, next_monday
 from wotcha.domain.models import (
     EMOJI_TO_LEVEL,
+    Meal,
+    MealStatus,
     Member,
     Outcome,
     Signal,
     SignalLevel,
     SlotOutcome,
     Substitute,
+    SuggestionStatus,
     Week,
 )
 from wotcha.store.repo import Repository
@@ -151,6 +154,53 @@ def _correction_html(slot, meals: dict, token: str, delivered,
           </details>"""
 
 
+def _slugify(name: str) -> str:
+    """A meal id from a cook-typed name. Deliberately dumb and predictable --
+    a surprising id shows up in the fence, in rationales, and in every
+    signal ever recorded against the meal."""
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
+    return "-".join(part for part in slug.split("-") if part)
+
+
+def _suggestions_html(suggestions: list, meals: dict, token: str,
+                      is_cook: bool) -> str:
+    """Pending suggestions, and the cook's controls if this is the cook.
+
+    Shown to everyone, deliberately. v1 sends nothing back over SMS, so this
+    is the only feedback a person gets that their text arrived at all --
+    without it a suggestion is indistinguishable from a broken system.
+    """
+    pending = [s for s in suggestions if s.status is SuggestionStatus.PENDING]
+    if not pending:
+        return ""
+    cards = []
+    for s in pending:
+        # Untrusted: this text came off a carrier network from a person.
+        said = html.escape(s.text)
+        note = f'<div class="why">{html.escape(s.note)}</div>' if s.note else ""
+        if s.matched_meal_id and s.matched_meal_id in meals:
+            note += (f'<div class="why">Already on the list as '
+                     f'{html.escape(meals[s.matched_meal_id].name)}.</div>')
+        if not is_cook:
+            cards.append(f'<li><div class="meal">{said}</div>{note}'
+                         f'<div class="why">waiting for the cook</div></li>')
+            continue
+        name = html.escape(s.proposed_name or "")
+        cards.append(f"""
+        <li>
+          <div class="meal">{said}</div>
+          {note}
+          <form method="post" action="/s/{html.escape(token)}">
+            <input type="hidden" name="suggestion_id" value="{html.escape(s.suggestion_id)}">
+            <input type="hidden" name="created_at" value="{s.created_at.isoformat()}">
+            <input name="proposed_name" value="{name}" placeholder="meal name">
+            <button name="action" value="approve">add as candidate</button>
+            <button name="action" value="decline">no</button>
+          </form>
+        </li>""")
+    return f'<h2>Suggestions</h2><ul>{"".join(cards)}</ul>'
+
+
 def _public_page(week: Week, meals: dict) -> str:
     """The same week, for anyone with the link and nobody in particular.
 
@@ -194,7 +244,7 @@ chose it. Week of {week.week_start.isoformat()}.</p>
 
 
 def _page(member: Member, week: Week, meals: dict, token: str,
-          outcomes: dict, today: date) -> str:
+          outcomes: dict, today: date, suggestions: list) -> str:
     # The rationale is shown only to cooks -- everyone else sees the meal and
     # can react, but not the reasoning behind it (household owner's call).
     show_rationale = member.is_cook
@@ -249,6 +299,7 @@ def _page(member: Member, week: Week, meals: dict, token: str,
 <p class="sub">Hi {html.escape(member.name)} — here's the week of
 {week.week_start.isoformat()}.</p>
 <ul>{''.join(rows)}</ul>
+{_suggestions_html(suggestions, meals, token, member.is_cook)}
 </body></html>"""
 
 
@@ -320,8 +371,9 @@ def handler(event: dict, _context) -> dict:
             return _resp(200, "<p>No week planned yet. Check back soon.</p>")
         meals = {m.meal_id: m for m in repo.list_meals(household_id)}
         outcomes = repo.outcomes_for_week(household_id, week.week_start)
+        suggestions = repo.list_suggestions(household_id)
         return _resp(200, _page(member, week, meals, token, outcomes,
-                                local_today()))
+                                local_today(), suggestions))
 
     if route == "r" and method == "POST":
         try:
@@ -427,5 +479,58 @@ def handler(event: dict, _context) -> dict:
             substitute_meal_id=substitute_meal_id,
         ))
         return {"statusCode": 303, "headers": {"location": f"/w/{token}"}, "body": ""}
+
+    if route == "s" and method == "POST":
+        # Checked here, not merely hidden in the template. Hiding the control
+        # is presentation; refusing the request is the rule. The buck stops
+        # with the cook.
+        if not member.is_cook:
+            return _resp(403, "Only a cook can decide that.", "text/plain")
+        try:
+            body = _request_body(event)
+        except _BadBody:
+            return _resp(400, "Malformed request body.", "text/plain")
+        form = parse_qs(body)
+        suggestion_id = (form.get("suggestion_id") or [""])[0]
+        created_at = (form.get("created_at") or [""])[0]
+        action = (form.get("action") or [""])[0]
+
+        suggestion = repo.get_suggestion(household_id, created_at, suggestion_id)
+        if suggestion is None:
+            return _resp(404, "No such suggestion.", "text/plain")
+
+        if action == "decline":
+            repo.put_suggestion(household_id, suggestion.model_copy(
+                update={"status": SuggestionStatus.DECLINED}))
+            return {"statusCode": 303, "headers": {"location": f"/w/{token}"},
+                    "body": ""}
+        if action != "approve":
+            return _resp(400, "Unknown action.", "text/plain")
+
+        name = (form.get("proposed_name") or [""])[0].strip()
+        meal_id = _slugify(name)
+        if not meal_id:
+            return _resp(400, "A meal needs a name.", "text/plain")
+        # Refused rather than merged: put_meal overwrites wholesale, so
+        # approving onto an existing id would rewrite a Safe Meal's status
+        # from a suggestion form -- silently retiring or un-retiring it.
+        if any(m.meal_id == meal_id for m in repo.list_meals(household_id)):
+            return _resp(400, "The household already has a meal by that name.",
+                         "text/plain")
+
+        # CANDIDATE, never SAFE or AUDITIONING. get_safe_list returns neither,
+        # so approving adds to the roster without putting it on next week's
+        # table -- the Curator decides whether it earns an audition.
+        # effort_minutes=0 because nobody has said. The field is required and
+        # get_safe_list withholds it from the Planner anyway, so an honest
+        # zero beats a guess -- the same reasoning that leaves cook_id unset.
+        repo.put_meal(household_id, Meal(
+            meal_id=meal_id, name=name, effort_minutes=0,
+            status=MealStatus.CANDIDATE,
+        ))
+        repo.put_suggestion(household_id, suggestion.model_copy(
+            update={"status": SuggestionStatus.APPROVED}))
+        return {"statusCode": 303, "headers": {"location": f"/w/{token}"},
+                "body": ""}
 
     return _resp(404, "Not found", "text/plain")
