@@ -54,11 +54,99 @@ class Signal(BaseModel):
     note: str | None = None
 
 
+class SuggestionStatus(StrEnum):
+    """Where a suggestion stands with the cook.
+
+    Stored rather than derived, unlike `SlotOutcome` and escalation
+    resolution. Those work because the answer is already in the table -- a
+    past night nobody corrected went as planned; a published week answers a
+    fence question. Nothing except the cook can produce the fact that the
+    cook decided.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+
+
+class SuggestionKind(StrEnum):
+    """What the Liaison believes a message to be.
+
+    Recorded, never acted on beyond NEW_MEAL and EXISTING_MEAL. v1 writes
+    only suggestions -- but labelling the rest is what makes
+    `extraction_accuracy` (spec section 13) measurable before the extraction
+    is trusted enough to write signals and outcomes.
+
+    UNKNOWN is the default so an unread or unreadable message never arrives
+    wearing a confident classification.
+    """
+
+    UNKNOWN = "unknown"
+    NEW_MEAL = "new_meal"
+    EXISTING_MEAL = "existing_meal"
+    # Read as a report about a night, not a request. v1 does not write
+    # outcomes; the label is the whole point.
+    REPORT = "report"
+    # A reaction to a meal. Same -- v1 does not write signals.
+    REACTION = "reaction"
+    # Recognisably none of the above, including an attempt to instruct the
+    # system. A row the cook can see is better than a silent drop.
+    OTHER = "other"
+
+
+# One SMS is at most a few hundred characters, but nothing stops a determined
+# teenager pasting an essay. The cap bounds the row and the page without
+# discarding anything a person would plausibly mean to send.
+SUGGESTION_TEXT_MAX = 1000
+
+
 class Suggestion(BaseModel):
+    """Something a family member asked for, waiting on the cook.
+
+    The Liaison enriches this and never decides it. Every proposed field is
+    the agent's read and is editable by the cook before approval; `text` is
+    what was actually sent and is never touched.
+    """
+
     household_id: str
+    # The inbound message id from the SMS payload, so a redelivery overwrites
+    # its own row. SQS Standard is at-least-once: the same text will
+    # eventually arrive twice, and the family must not see it twice.
+    suggestion_id: str
     person_id: str
     text: str
     created_at: datetime
+    status: SuggestionStatus = SuggestionStatus.PENDING
+
+    # --- the agent's read, all of it editable -------------------------
+    kind: SuggestionKind = SuggestionKind.UNKNOWN
+    matched_meal_id: str | None = None
+    proposed_name: str | None = None
+    proposed_tags: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _cap_text(cls, data):
+        if isinstance(data, dict) and isinstance(data.get("text"), str):
+            data = {**data, "text": data["text"][:SUGGESTION_TEXT_MAX]}
+        return data
+
+    @model_validator(mode="after")
+    def _text_is_not_blank(self) -> "Suggestion":
+        if not self.text.strip():
+            raise ValueError("a suggestion with no text gives the cook nothing to decide")
+        return self
+
+    @model_validator(mode="after")
+    def _a_match_does_not_also_propose(self) -> "Suggestion":
+        if self.matched_meal_id and self.proposed_name:
+            raise ValueError(
+                f"matched_meal_id={self.matched_meal_id!r} says the household already "
+                f"cooks this, so proposed_name={self.proposed_name!r} asks the cook a "
+                f"second, contradictory question"
+            )
+        return self
 
 
 class SlotOutcome(StrEnum):
