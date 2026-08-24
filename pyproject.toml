@@ -22,7 +22,7 @@ build-backend = "hatchling.build"
 packages = ["src/wotcha"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "scripts"]
+pythonpath = ["src", "scripts", "lambdas"]
 testpaths = ["tests"]
 markers = ["integration: hits real AWS; deselected by default"]
 addopts = "-m 'not integration'"
