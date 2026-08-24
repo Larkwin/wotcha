@@ -70,6 +70,36 @@ class Repository:
         return [Member(**self._strip(i))
                 for i in self._query_prefix(household_id, "MEMBER#")]
 
+    def member_by_phone(self, household_id: str, phone) -> Member | None:
+        """Who sent this, or None.
+
+        The sender's number is the only trustworthy thing about an inbound
+        message -- it is per-person identity with no login and no token, the
+        same property the signed links give the web page. Everything else in
+        the message is input from someone who may be trying to game the
+        system.
+
+        An empty lookup matches nobody, deliberately: members reachable only
+        by email have no phone, and `None == None` would otherwise hand a
+        stranger somebody's identity.
+
+        The `phone` parameter is attacker-influenced and only truthiness-checked
+        upstream, so this boundary treats a non-string (e.g., a list from a
+        malformed inbound record) as nobody rather than raising. This prevents
+        the consumer Lambda from crashing and dead-lettering a message that was
+        only ever junk.
+        """
+        # Defend against non-string phone from malformed inbound records.
+        if not isinstance(phone, str):
+            return None
+        wanted = phone.strip()
+        if not wanted:
+            return None
+        for member in self.list_members(household_id):
+            if member.phone and member.phone.strip() == wanted:
+                return member
+        return None
+
     # --- weeks ------------------------------------------------------------
     def put_week(self, week: Week) -> None:
         self._put(keys.week_key(week.household_id, week.week_start), week)
