@@ -114,6 +114,14 @@ def test_the_consumer_can_reach_bedrock():
 
 
 def test_the_consumer_batches_small():
-    """A batch failure redelivers the whole batch, so every message in it is
-    re-read by the model. Small batches bound what one bad record costs."""
-    assert "batch_size=" in CODE
+    """Pinned at 1, not just present. lambdas/liaison.py's `handler`
+    deliberately has no per-record try/except -- a ruling made on the
+    explicit grounds that batch_size=1 makes "the whole batch" one record,
+    so a transient DynamoDB error retries that one message instead of a
+    swallowed exception silently dropping it. Raising this number would
+    silently invalidate that reasoning: a batch failure would then redeliver
+    -- and re-read by the model -- every neighbour of one bad record, with
+    nothing here to say so. A reader who changes this value should learn the
+    cross-file dependency from this failing test, not from a production
+    incident."""
+    assert "batch_size=1" in CODE
