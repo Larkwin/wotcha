@@ -51,3 +51,10 @@ def test_outcome_keys_sort_by_date():
     early = keys.outcome_key("demo", date(2026, 8, 2))["sk"]
     late = keys.outcome_key("demo", date(2026, 8, 20))["sk"]
     assert early < late
+
+
+def test_suggestion_key_is_timestamp_ordered():
+    """Newest-first is a range query, exactly like ESCALATION# and EVAL#.
+    The id is appended so two messages in the same second cannot collide."""
+    k = keys.suggestion_key("demo", "2026-08-24T18:03:00+00:00", "abc123")
+    assert k == {"pk": "HH#demo", "sk": "SUGGESTION#2026-08-24T18:03:00+00:00#abc123"}

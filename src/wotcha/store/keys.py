@@ -57,6 +57,22 @@ def escalation_key(household_id: str, iso_timestamp: str, unique: str) -> dict[s
     return {"pk": hh_pk(household_id), "sk": f"ESCALATION#{iso_timestamp}#{unique}"}
 
 
+def suggestion_key(
+    household_id: str, iso_timestamp: str, suggestion_id: str
+) -> dict[str, str]:
+    """Something a family member asked for. Timestamp-ordered like the eval
+    log and escalations, so "the newest ones" is a range query.
+
+    The timestamp comes from the SNS envelope rather than the moment of
+    writing, which is what makes this key deterministic: SQS redelivers, and
+    a redelivery must land on the same row rather than beside it.
+    """
+    return {
+        "pk": hh_pk(household_id),
+        "sk": f"SUGGESTION#{iso_timestamp}#{suggestion_id}",
+    }
+
+
 def drift_case_key(household_id: str, case_id: str) -> dict[str, str]:
     """Ground truth for the Curator scorecard (spec section 13): a meal a
     specific person quietly went off, and roughly when."""

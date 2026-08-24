@@ -15,6 +15,8 @@ from wotcha.domain.models import (
     Slot,
     SlotOutcome,
     Substitute,
+    Suggestion,
+    SuggestionStatus,
     Week,
 )
 from wotcha.store import keys
@@ -306,3 +308,47 @@ def test_the_escalation_history_is_not_deleted_by_resolving(repo):
                        published_at=datetime(2026, 8, 22, tzinfo=UTC)))
     assert repo.unresolved_escalations(HID) == []
     assert len(repo._query_prefix(HID, "ESCALATION#")) == 1
+
+
+def _sugg(text: str, ts: str, sid: str, **over) -> Suggestion:
+    fields = {
+        "household_id": HID, "suggestion_id": sid, "person_id": "riley",
+        "text": text, "created_at": datetime.fromisoformat(ts),
+    }
+    fields.update(over)
+    return Suggestion(**fields)
+
+
+def test_suggestions_round_trip(repo):
+    repo.put_suggestion(HID, _sugg("poutine?", "2026-08-24T18:03:00+00:00", "m1"))
+    got = repo.list_suggestions(HID)
+    assert len(got) == 1
+    assert got[0].text == "poutine?"
+    assert got[0].status is SuggestionStatus.PENDING
+
+
+def test_suggestions_come_back_newest_first(repo):
+    repo.put_suggestion(HID, _sugg("older", "2026-08-24T09:00:00+00:00", "m1"))
+    repo.put_suggestion(HID, _sugg("newest", "2026-08-24T18:00:00+00:00", "m2"))
+    repo.put_suggestion(HID, _sugg("middle", "2026-08-24T12:00:00+00:00", "m3"))
+    assert [s.text for s in repo.list_suggestions(HID)] == ["newest", "middle", "older"]
+
+
+def test_a_redelivered_message_overwrites_rather_than_duplicating(repo):
+    """SQS Standard is at-least-once, so the same text will eventually arrive
+    twice. Keyed on the inbound message id, the second delivery lands on the
+    same row -- the family sees one card, not two."""
+    first = _sugg("poutine?", "2026-08-24T18:03:00+00:00", "same-id")
+    repo.put_suggestion(HID, first)
+    repo.put_suggestion(HID, first)
+    assert len(repo.list_suggestions(HID)) == 1
+
+
+def test_get_suggestion_finds_one_by_its_key(repo):
+    repo.put_suggestion(HID, _sugg("poutine?", "2026-08-24T18:03:00+00:00", "m1"))
+    got = repo.get_suggestion(HID, "2026-08-24T18:03:00+00:00", "m1")
+    assert got is not None and got.text == "poutine?"
+
+
+def test_get_suggestion_returns_none_when_absent(repo):
+    assert repo.get_suggestion(HID, "2026-08-24T18:03:00+00:00", "nope") is None

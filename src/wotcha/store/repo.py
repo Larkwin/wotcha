@@ -11,7 +11,7 @@ from boto3.dynamodb.conditions import Key
 
 from wotcha.domain.escalations import is_resolved
 from wotcha.domain.fence import Fence
-from wotcha.domain.models import Meal, MealStatus, Member, Outcome, Signal, Week
+from wotcha.domain.models import Meal, MealStatus, Member, Outcome, Signal, Suggestion, Week
 from wotcha.store import keys
 
 
@@ -199,6 +199,38 @@ class Repository:
             UpdateExpression="SET notified_at = :t",
             ExpressionAttributeValues={":t": datetime.now(UTC).isoformat()},
         )
+
+    # --- suggestions ------------------------------------------------------
+    def put_suggestion(self, household_id: str, suggestion: Suggestion) -> None:
+        """Write one thing a family member asked for.
+
+        Idempotent by construction: the key carries the inbound message id, so
+        an SQS redelivery overwrites its own row instead of showing the
+        household the same request twice.
+        """
+        self._put(
+            keys.suggestion_key(
+                household_id,
+                suggestion.created_at.isoformat(),
+                suggestion.suggestion_id,
+            ),
+            suggestion,
+        )
+
+    def list_suggestions(self, household_id: str) -> list[Suggestion]:
+        """Every suggestion, newest first. Sorted explicitly rather than
+        trusting query order, exactly like recent_weeks."""
+        items = self._query_prefix(household_id, "SUGGESTION#")
+        items.sort(key=lambda i: i["sk"], reverse=True)
+        return [Suggestion(**self._strip(i)) for i in items]
+
+    def get_suggestion(
+        self, household_id: str, iso_timestamp: str, suggestion_id: str
+    ) -> Suggestion | None:
+        resp = self._table.get_item(
+            Key=keys.suggestion_key(household_id, iso_timestamp, suggestion_id)
+        )
+        return Suggestion(**self._strip(resp["Item"])) if "Item" in resp else None
 
     # --- eval log ---------------------------------------------------------
     def put_eval_record(self, household_id: str, record: dict) -> None:
