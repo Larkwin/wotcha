@@ -70,7 +70,7 @@ class Repository:
         return [Member(**self._strip(i))
                 for i in self._query_prefix(household_id, "MEMBER#")]
 
-    def member_by_phone(self, household_id: str, phone) -> Member | None:
+    def member_by_phone(self, household_id: str, phone: object) -> Member | None:
         """Who sent this, or None.
 
         The sender's number is the only trustworthy thing about an inbound
@@ -89,7 +89,6 @@ class Repository:
         the consumer Lambda from crashing and dead-lettering a message that was
         only ever junk.
         """
-        # Defend against non-string phone from malformed inbound records.
         if not isinstance(phone, str):
             return None
         wanted = phone.strip()

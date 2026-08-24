@@ -682,6 +682,82 @@ def test_a_suggestion_survives_the_no_week_page(seeded):
     assert "can we have poutine" in body
 
 
+def test_approving_an_already_declined_suggestion_is_refused(seeded):
+    """/s/ never checked suggestion.status -- only .is_cook -- so a
+    back-button or a stale tab could re-POST `approve` against a row the
+    cook already declined and flip it. lambdas/liaison.py guards this exact
+    invariant against SQS redelivery; this is the other place a decision is
+    actually made, and it must refuse the same way."""
+    sid, ts = _pending(seeded, status=SuggestionStatus.DECLINED)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve", "Poutine")), None)
+    assert resp["statusCode"] == 409
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.DECLINED
+    assert not any(m.meal_id == "poutine" for m in seeded.list_meals(HID))
+
+
+def test_declining_an_already_approved_suggestion_is_refused(seeded):
+    sid, ts = _pending(seeded, status=SuggestionStatus.APPROVED)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}", _sugg_body(sid, ts, "decline")), None)
+    assert resp["statusCode"] == 409
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.APPROVED
+
+
+def test_posting_a_decision_with_missing_created_at_returns_400(seeded):
+    """Same untrusted source, same defect as `on_date` on `/r/` and `/o/`:
+    created_at reaches repo.get_suggestion -> keys.suggestion_key ->
+    datetime.fromisoformat, which raises on "" -- a 500, not a 400, without
+    this guard."""
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           "suggestion_id=m1&action=approve&proposed_name=X"), None)
+    assert resp["statusCode"] == 400
+
+
+def test_posting_a_decision_with_malformed_created_at_returns_400(seeded):
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           "suggestion_id=m1&created_at=nope&action=approve"
+                           "&proposed_name=X"), None)
+    assert resp["statusCode"] == 400
+
+
+def test_approving_a_name_over_the_length_cap_is_refused(seeded):
+    """The same class of gap as the missing name-length check on the other
+    endpoints' untrusted fields: an over-long `proposed_name` produces a
+    meal_id that overflows DynamoDB's sort-key limit, surfacing as a 500 from
+    put_meal instead of a clean 400."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve",
+                                      "x" * (app.MEAL_ID_MAX_BYTES + 1))),
+                       None)
+    assert resp["statusCode"] == 400
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.PENDING
+    assert {m.meal_id for m in seeded.list_meals(HID)} == {"chili"}
+
+
+def test_approving_a_name_of_multibyte_characters_is_bounded_by_bytes_not_chars(seeded):
+    """_slugify keeps any character isalnum() calls true, not just ASCII, so
+    a name built from multi-byte alphanumerics can stay under a
+    character-count cap while its slugified meal_id overflows DynamoDB's
+    1024-byte sort-key limit. This name is 400 Japanese hiragana characters
+    -- comfortably under any plausible character cap -- but each encodes to
+    3 UTF-8 bytes, so the meal_id is ~1200 bytes: over the limit, and the
+    exact case a bound on len(name) instead of len(meal_id.encode()) would
+    miss."""
+    sid, ts = _pending(seeded)
+    token = make_token(HID, "maya", SECRET)
+    resp = app.handler(req("POST", f"/s/{token}",
+                           _sugg_body(sid, ts, "approve", "あ" * 400)), None)
+    assert resp["statusCode"] == 400
+    assert seeded.get_suggestion(HID, ts, sid).status is SuggestionStatus.PENDING
+    assert {m.meal_id for m in seeded.list_meals(HID)} == {"chili"}
+
+
 def test_the_no_week_page_still_gates_approval_controls_by_cook(seeded):
     seeded._table.delete_item(Key=keys.week_key(HID, _current_monday()))
     sid, _ts = _pending(seeded)

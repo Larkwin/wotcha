@@ -7,7 +7,7 @@ fabricated one.
 import base64
 import binascii
 import html
-from datetime import date
+from datetime import date, datetime
 from functools import lru_cache
 from urllib.parse import parse_qs
 
@@ -152,6 +152,26 @@ def _correction_html(slot, meals: dict, token: str, delivered,
               <button name="substitute" value="off_list">something else</button>
             </form>
           </details>"""
+
+
+# The meal_id _slugify produces becomes the sort key's suffix
+# ("MEAL#{meal_id}"), and DynamoDB rejects a sort key over 1024 bytes:
+# 1024 - len("MEAL#") = 1019 bytes left for meal_id, no fudge needed since
+# that arithmetic is exact.
+#
+# Checked against the *encoded* meal_id, not against len(name): _slugify's
+# c.lower() is not guaranteed length-preserving in bytes (U+0130, LATIN
+# CAPITAL LETTER I WITH DOT ABOVE, lowercases to two codepoints), and
+# _slugify keeps any character isalnum() calls true -- which is most of
+# Unicode, not just ASCII -- so a name built from multi-byte alphanumerics
+# can produce a meal_id whose byte length exceeds its character count.
+# Bounding the input name's character count would leave that path open;
+# only bounding what actually becomes the sort key closes it. Unbounded, a
+# `proposed_name` past this limit -- the same defect class as `on_date`
+# below, just a different untrusted field on the same endpoint -- reaches
+# put_meal and DynamoDB raises, surfacing as a 500 from this handler instead
+# of a 400 telling the cook their name is too long.
+MEAL_ID_MAX_BYTES = 1024 - len("MEAL#")
 
 
 def _slugify(name: str) -> str:
@@ -503,9 +523,30 @@ def handler(event: dict, _context) -> dict:
         created_at = (form.get("created_at") or [""])[0]
         action = (form.get("action") or [""])[0]
 
+        # Same untrusted-field, same defect as `on_date` on `/r/` and `/o/`
+        # above: created_at is handed to repo.get_suggestion, which threads it
+        # through keys.suggestion_key into datetime.fromisoformat -- an
+        # uncaught ValueError on "" or a truncated value, i.e. a 500 rather
+        # than a 400. `/s/` was written after both siblings and did not
+        # inherit their guard; this is that guard.
+        try:
+            datetime.fromisoformat(created_at)
+        except ValueError:
+            return _resp(400, "Missing or invalid date.", "text/plain")
+
         suggestion = repo.get_suggestion(household_id, created_at, suggestion_id)
         if suggestion is None:
             return _resp(404, "No such suggestion.", "text/plain")
+
+        # A decision is made once. lambdas/liaison.py guards this same
+        # invariant against SQS redelivery resetting the cook's call; this is
+        # the other place a decision is actually made, and it was unguarded.
+        # `.is_cook` above stops who can decide -- it says nothing about what
+        # state the thing being decided is in, so a back-button or a stale
+        # tab could re-POST `approve` against a row already DECLINED (or
+        # already APPROVED) and flip it.
+        if suggestion.status != SuggestionStatus.PENDING:
+            return _resp(409, "That suggestion was already decided.", "text/plain")
 
         if action == "decline":
             repo.put_suggestion(household_id, suggestion.model_copy(
@@ -519,6 +560,8 @@ def handler(event: dict, _context) -> dict:
         meal_id = _slugify(name)
         if not meal_id:
             return _resp(400, "A meal needs a name.", "text/plain")
+        if len(meal_id.encode()) > MEAL_ID_MAX_BYTES:
+            return _resp(400, "That name is too long.", "text/plain")
         # Refused rather than merged: put_meal overwrites wholesale, so
         # approving onto an existing id would rewrite a Safe Meal's status
         # from a suggestion form -- silently retiring or un-retiring it.

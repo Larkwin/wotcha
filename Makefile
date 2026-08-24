@@ -37,17 +37,31 @@ bootstrap-infra:
 	cd infra && .venv/bin/pip install --upgrade pip
 	cd infra && .venv/bin/pip install -r requirements.txt
 
-# Builds the Lambda deployment asset for both the Web and Scheduler
-# functions (infra/stack.py points aws_lambda.Code.from_asset at
-# ../build/web for both). The web Lambda runs on PYTHON_3_12/x86_64, which
-# is not this machine -- pydantic-core is a compiled extension, so a plain
+# Builds the Lambda deployment assets. Two of them, deliberately, not one --
+# infra/stack.py points the Web and Scheduler functions at ../build/web and
+# the Liaison at ../build/liaison.
+#
+# The Liaison is the one that needs strands-agents (wotcha/agents/liaison.py
+# does `from strands import Agent`). strands-agents pulls in mcp,
+# opentelemetry-*, httpx, jsonschema, pyyaml, watchdog and docstring-parser --
+# none of which Web or Scheduler ever import. Putting it in build/web anyway
+# was considered and rejected: that would bloat the cold start of two
+# functions that will never touch any of it, just to save one asset
+# directory. A per-function asset costs nothing at runtime and keeps each
+# bundle carrying only what its own handler imports.
+#
+# Both installs use the same --platform/--python-version/--implementation/
+# --only-binary flags, for the same reason: the Lambda runtime is
+# PYTHON_3_12/x86_64, which is not this machine, and pydantic-core (and
+# strands-agents' own compiled dependencies) are native extensions. A plain
 # `pip install` here would vendor a macOS/arm wheel that 500s on every
-# invoke. --platform/--python-version/--implementation/--only-binary force
-# pip to fetch the manylinux cp312 wheel instead of building one locally.
-# boto3 ships in the Lambda runtime already and is deliberately not vendored
-# -- confirmed 2026-08-20 against the actual public.ecr.aws/lambda/python:3.12
-# base image (boto3 1.42.97), which already has the bedrock-agentcore service
-# model with invoke_agent_runtime, so the scheduler Lambda needs nothing extra.
+# invoke; these flags force pip to fetch the manylinux cp312 wheel instead of
+# building one locally. boto3 ships in the Lambda runtime already and is
+# deliberately not vendored into either asset -- confirmed 2026-08-20 against
+# the actual public.ecr.aws/lambda/python:3.12 base image (boto3 1.42.97),
+# which already has the bedrock-agentcore service model with
+# invoke_agent_runtime, so the scheduler Lambda needs nothing extra, and
+# already has bedrock-runtime for the Liaison's Converse/ConverseStream calls.
 # Uses $(PY) (the repo .venv), not the bare `python3` on PATH, so this works
 # the same on a fresh clone regardless of what pip does or doesn't allow for
 # the system interpreter -- --python-version 3.12 already makes the *target*
@@ -63,7 +77,16 @@ build-lambda: $(VENV)
 		--quiet
 	cp -r src/wotcha build/web/wotcha
 	cp lambdas/scheduler.py build/web/scheduler.py
-	cp lambdas/liaison.py build/web/liaison.py
+	rm -rf build/liaison && mkdir -p build/liaison
+	$(PY) -m pip install strands-agents pydantic \
+		--target build/liaison \
+		--only-binary=:all: \
+		--platform manylinux2014_x86_64 \
+		--python-version 3.12 \
+		--implementation cp \
+		--quiet
+	cp -r src/wotcha build/liaison/wotcha
+	cp lambdas/liaison.py build/liaison/liaison.py
 
 # infra/stack.py reads these three from the environment, and every one of
 # them fails *quietly* when absent: no WOTCHA_RUNTIME_ROLE_ARN silently
@@ -125,9 +148,10 @@ check-deploy-env:
 
 # check-deploy-env first, and it is listed first deliberately: make runs
 # prerequisites in order, so the refusal happens before anything is built.
-# build-lambda before the deploy itself: infra/stack.py's
-# Code.from_asset("../build/web") must exist before `cdk synth`/`cdk deploy`
-# can package it, and that directory does not exist on a fresh clone.
+# build-lambda before the deploy itself: infra/stack.py's two
+# Code.from_asset calls -- ../build/web (Web, Scheduler) and ../build/liaison
+# (Liaison) -- must both exist before `cdk synth`/`cdk deploy` can package
+# them, and neither directory exists on a fresh clone.
 deploy: check-deploy-env bootstrap-infra build-lambda
 	cd infra && cdk deploy --require-approval never
 

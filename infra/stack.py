@@ -74,6 +74,18 @@ class WotchaStack(Stack):
         schedule_enabled = os.environ.get("WOTCHA_SCHEDULE_ENABLED", "false").lower() == "true"
 
         code = lambda_.Code.from_asset("../build/web")
+        # The Liaison gets its own asset rather than sharing `code` above.
+        # wotcha/agents/liaison.py does `from strands import Agent`, and
+        # strands-agents is not in build/web -- Makefile's build-lambda only
+        # ever installed pydantic there. Bundling strands-agents into
+        # build/web instead of a separate asset was rejected: that package
+        # pulls in mcp, opentelemetry-*, httpx, jsonschema, pyyaml, watchdog
+        # and docstring-parser, none of which Web or Scheduler import, so it
+        # would bloat the cold start of both of them to satisfy a dependency
+        # only the Liaison has. build/liaison (see the Makefile comment)
+        # carries strands-agents and pydantic and nothing else the other two
+        # functions would have to pay for.
+        liaison_code = lambda_.Code.from_asset("../build/liaison")
         common_env = {
             "WOTCHA_AWS_REGION": self.region,
             "WOTCHA_TABLE_NAME": self.table.table_name,
@@ -350,7 +362,7 @@ class WotchaStack(Stack):
             self, "Liaison",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="liaison.handler",
-            code=code,
+            code=liaison_code,
             # One Bedrock call per record, on a small model. Generous enough
             # that a slow response is not a redelivery.
             timeout=Duration.seconds(60),
