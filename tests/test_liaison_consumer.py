@@ -11,7 +11,7 @@ import pytest
 from moto import mock_aws
 
 from wotcha.agents.liaison import LiaisonRead
-from wotcha.domain.models import Meal, MealStatus, Member, SuggestionKind
+from wotcha.domain.models import Meal, MealStatus, Member, SuggestionKind, SuggestionStatus
 from wotcha.store.repo import Repository
 
 HID = "demo"
@@ -108,3 +108,46 @@ def test_the_agent_is_not_asked_about_an_unknown_sender(seeded, monkeypatch):
     consumer.handle_record(seeded, HID, _record(number="+15195550999"),
                            "test-model", "us-east-1")
     assert called == []
+
+
+def test_a_redelivery_after_a_status_change_leaves_it_untouched(seeded, monkeypatch):
+    """Nothing writes APPROVED yet -- Task 6 does -- but a DLQ redrive must
+    not be able to un-decide something the cook already decided, and must
+    not cost a second Bedrock call for a message already on file."""
+    rec = _record()
+    consumer.handle_record(seeded, HID, rec, "test-model", "us-east-1")
+    approved = seeded.list_suggestions(HID)[0].model_copy(
+        update={"status": SuggestionStatus.APPROVED})
+    seeded.put_suggestion(HID, approved)
+
+    called = []
+    monkeypatch.setattr(consumer, "read_message",
+                        lambda *a, **k: called.append(1))
+    consumer.handle_record(seeded, HID, rec, "test-model", "us-east-1")
+
+    assert seeded.list_suggestions(HID)[0].status == SuggestionStatus.APPROVED
+    assert called == []
+
+
+def test_a_failed_read_still_stores_the_text_and_logs_an_eval_record(seeded, monkeypatch):
+    """read_message never raises -- it degrades to UNKNOWN on a model
+    failure -- but that degraded read must still produce a row and an eval
+    record, because an unreachable model is itself a reliability signal."""
+    monkeypatch.setattr(
+        consumer, "read_message",
+        lambda *a, **k: LiaisonRead(
+            kind=SuggestionKind.UNKNOWN,
+            note="This message could not be read automatically (Exception).",
+        ),
+    )
+    consumer.handle_record(seeded, HID, _record(body="can we have poutine"),
+                           "test-model", "us-east-1")
+
+    rows = seeded.list_suggestions(HID)
+    assert len(rows) == 1
+    assert rows[0].text == "can we have poutine"
+    assert rows[0].kind == SuggestionKind.UNKNOWN
+
+    records = seeded._query_prefix(HID, "EVAL#")
+    assert len(records) == 1
+    assert records[0]["kind"] == "extraction"

@@ -38,6 +38,23 @@ def handle_record(
     if member is None:
         return None
 
+    # If this inboundMessageId has already been written, this message has
+    # already been processed -- return that row unchanged rather than
+    # rebuilding one. `Suggestion` defaults a new row's `status` to PENDING,
+    # and `put_suggestion` overwrites the item wholesale, so without this
+    # check an SQS redelivery (or a DLQ redrive) would silently reset
+    # whatever the cook had already decided. That mirrors why publish_plan
+    # (agents/planner_tools.py) reads the prior week before writing: a
+    # second write from the same at-least-once delivery must never erase a
+    # decision the first write's outcome already carries. Checking here also
+    # keeps a redelivery from costing a second Bedrock call and a second
+    # eval record, for the same reason the sender is resolved before the
+    # model is asked at all.
+    prior = repo.get_suggestion(household_id, message.received_at.isoformat(),
+                                message.message_id)
+    if prior is not None:
+        return prior
+
     meals = repo.list_meals(household_id)
     read = read_message(message.body, meals, model_id=model_id, region=region)
 
@@ -82,6 +99,13 @@ def handler(event, _context) -> dict:
     region = os.environ["WOTCHA_AWS_REGION"]
 
     stored = 0
+    # No per-record try/except here. The event source mapping (Task 7) is
+    # configured with batch_size=1, so "the whole batch" this loop can fail
+    # is one record -- an unhandled exception fails that one invocation and
+    # SQS redelivers it, which is correct: a transient DynamoDB error should
+    # be retried, not swallowed. A try/except that logged and continued would
+    # trade a retryable failure for a silently dropped message, which is
+    # strictly worse than the retry storm it would be avoiding.
     for record in event.get("Records", []):
         if handle_record(repo, household_id, record, model_id, region) is not None:
             stored += 1
