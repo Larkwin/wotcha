@@ -116,6 +116,47 @@ def test_members_round_trip(repo):
     assert members[0].is_cook is True
 
 
+def test_member_by_phone_finds_the_sender(repo):
+    """The sender's number is per-person identity for free -- no login, no
+    token. It is the one thing about an inbound message that is trustworthy."""
+    repo.put_member(HID, Member(person_id="riley", name="Riley",
+                                phone="+15195550112"))
+    found = repo.member_by_phone(HID, "+15195550112")
+    assert found is not None and found.person_id == "riley"
+
+
+def test_member_by_phone_ignores_surrounding_whitespace(repo):
+    repo.put_member(HID, Member(person_id="riley", name="Riley",
+                                phone="+15195550112"))
+    assert repo.member_by_phone(HID, "  +15195550112 ") is not None
+
+
+def test_an_unknown_number_resolves_to_nobody(repo):
+    """Anyone who knows the long code can text it -- inbound is not
+    restricted to verified numbers the way outbound is. No member means no
+    identity, and the caller drops the message rather than storing it."""
+    repo.put_member(HID, Member(person_id="riley", name="Riley",
+                                phone="+15195550112"))
+    assert repo.member_by_phone(HID, "+15195550999") is None
+
+
+def test_a_member_with_no_phone_never_matches(repo):
+    """Email-only members exist. An empty lookup must not match them."""
+    repo.put_member(HID, Member(person_id="gran", name="Gran",
+                                email="gran@example.test"))
+    assert repo.member_by_phone(HID, "") is None
+
+
+def test_a_number_that_is_not_even_a_string_matches_nobody(repo):
+    """The inbound parser truthiness-checks the sender's number but never
+    type-checks it, so a malformed record can hand this a list. Raising here
+    would crash the consumer and dead-letter a message that was only ever
+    junk -- the honest answer is the same as for an unknown number."""
+    repo.put_member(HID, Member(person_id="riley", name="Riley",
+                                phone="+15195550112"))
+    assert repo.member_by_phone(HID, ["+15195550112"]) is None
+
+
 def test_week_notified_at_round_trips(repo):
     # notified_at is the idempotency guard that stops a scheduler retry from
     # texting a family twice about the same week -- it must persist.
