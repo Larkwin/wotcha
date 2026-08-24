@@ -367,8 +367,31 @@ class WotchaStack(Stack):
         # message fails with AccessDenied -- exactly how the runtime's SMS
         # grant was found, and for exactly the same reason: a permission that
         # only matters on a real run.
+        #
+        # Both actions, not just InvokeModel: strands' BedrockModel.structured_output
+        # goes through .stream(), and streaming defaults to True there, so the
+        # actual API call is ConverseStream -- which needs
+        # bedrock:InvokeModelWithResponseStream, not bedrock:InvokeModel
+        # (Converse only). Passing streaming=False in agents/liaison.py would
+        # let InvokeModel alone suffice, but that pins this deploy's IAM to a
+        # library default living in a different file -- someone removing that
+        # kwarg later gets AccessDenied in production with nothing here to
+        # catch it. Both actions name the same capability (invoke this
+        # model), so granting both costs nothing in real privilege and
+        # matches what the library actually does rather than what we hope it
+        # does.
+        #
+        # resources=["*"], not scoped to a model or region ARN: unlike the
+        # AgentCore grant above, there is no per-deploy identifier to narrow
+        # to here -- WOTCHA_LIAISON_MODEL_ID is an operator-set default that
+        # can change without a stack edit, and Bedrock foundation-model ARNs
+        # are per-region, so a region-scoped ARN would need to track
+        # self.region by hand for a cross-region model catalog that already
+        # doesn't apply to a single Toronto household. The unscoped grant
+        # trades nothing meaningful away: bedrock:InvokeModel(WithResponseStream)
+        # already can't touch this account's own data, only run inference.
         liaison_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["bedrock:InvokeModel"],
+            actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
             resources=["*"],
         ))
         # batch_size 1: a failure redelivers the whole batch, and every

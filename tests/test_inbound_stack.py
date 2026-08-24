@@ -109,8 +109,17 @@ def test_the_consumer_is_wired_to_the_inbound_queue():
 def test_the_consumer_can_reach_bedrock():
     """Its whole job is one model call. Without this grant the first real
     message fails with AccessDenied -- the same failure mode as the SMS grant
-    in the M1 addendum, discovered the same way."""
+    in the M1 addendum, discovered the same way.
+
+    Both actions, deliberately. strands' BedrockModel.structured_output
+    streams by default, so the real call is ConverseStream, which needs
+    bedrock:InvokeModelWithResponseStream -- InvokeModel alone covers only
+    Converse. InvokeModel alone is the trap here: it looks right, the string
+    is even a substring of the one actually needed, and it only fails on a
+    real invocation, never in this test suite or in synth.
+    """
     assert "bedrock:InvokeModel" in CODE
+    assert "bedrock:InvokeModelWithResponseStream" in CODE
 
 
 def test_the_consumer_batches_small():
