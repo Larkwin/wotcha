@@ -105,7 +105,13 @@ class Suggestion(BaseModel):
 
     The Liaison enriches this and never decides it. Every proposed field is
     the agent's read and is editable by the cook before approval; `text` is
-    what was actually sent and is never touched.
+    what the person actually sent and is never replaced by the agent's read --
+    the cook is deciding about their words, not a paraphrase of them. That is
+    a distinct question from length: `text` is still capped at
+    `SUGGESTION_TEXT_MAX`, so the row and the page stay bounded against a
+    pathologically long message. Truncating is not un-verbatim-ing it; the
+    cap only ever discards a tail no cook would plausibly need to read to
+    decide.
     """
 
     household_id: str

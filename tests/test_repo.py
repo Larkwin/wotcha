@@ -352,3 +352,17 @@ def test_get_suggestion_finds_one_by_its_key(repo):
 
 def test_get_suggestion_returns_none_when_absent(repo):
     assert repo.get_suggestion(HID, "2026-08-24T18:03:00+00:00", "nope") is None
+
+
+def test_get_suggestion_finds_the_row_by_its_stored_timestamp_spelling(repo):
+    """`put_suggestion` builds the key from `created_at.isoformat()`
+    (`+00:00`); the item as stored spells the same instant with `Z`, because
+    that is what pydantic's `model_dump(mode="json")` writes. A caller who
+    reads the timestamp back off the stored item -- rather than off a live
+    model -- and hands it straight to `get_suggestion` must still land on the
+    same row, not a silent 404."""
+    repo.put_suggestion(HID, _sugg("poutine?", "2026-08-24T18:03:00+00:00", "m1"))
+    stored = repo._query_prefix(HID, "SUGGESTION#")[0]
+    assert stored["created_at"] == "2026-08-24T18:03:00Z"
+    got = repo.get_suggestion(HID, stored["created_at"], "m1")
+    assert got is not None and got.text == "poutine?"

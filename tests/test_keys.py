@@ -58,3 +58,14 @@ def test_suggestion_key_is_timestamp_ordered():
     The id is appended so two messages in the same second cannot collide."""
     k = keys.suggestion_key("demo", "2026-08-24T18:03:00+00:00", "abc123")
     assert k == {"pk": "HH#demo", "sk": "SUGGESTION#2026-08-24T18:03:00+00:00#abc123"}
+
+
+def test_suggestion_key_normalises_equivalent_timestamp_spellings():
+    """`+00:00` (from `datetime.isoformat()`, used when building the key from
+    a live model) and `Z` (from pydantic's `model_dump(mode="json")`, what a
+    caller reads back off a stored item) name the same instant. Whichever
+    spelling a caller has in hand, the row it addresses must be the same
+    one -- so both must resolve to one identical key."""
+    offset_form = keys.suggestion_key("demo", "2026-08-24T18:03:00+00:00", "abc123")
+    zulu_form = keys.suggestion_key("demo", "2026-08-24T18:03:00Z", "abc123")
+    assert offset_form == zulu_form

@@ -4,7 +4,7 @@ Every partition key carries the household id so multi-tenancy stays a config
 change rather than a migration. Sort keys are prefixed by entity type and
 ordered so that range queries work: signals sort by date, evals by timestamp.
 """
-from datetime import date
+from datetime import date, datetime
 
 
 def hh_pk(household_id: str) -> str:
@@ -66,10 +66,21 @@ def suggestion_key(
     The timestamp comes from the SNS envelope rather than the moment of
     writing, which is what makes this key deterministic: SQS redelivers, and
     a redelivery must land on the same row rather than beside it.
+
+    Parsed and re-emitted rather than interpolated as given: `Suggestion`'s
+    `created_at` reaches this function two ways for the same instant --
+    `datetime.isoformat()` (`+00:00`) when a caller builds the key from the
+    model, and pydantic's `model_dump(mode="json")` (`Z`) when a caller reads
+    the offset back off the stored item. Those two strings differ, so
+    interpolating verbatim would let `put_suggestion` and `get_suggestion`
+    silently address different rows for the same suggestion. Normalising
+    here, once, means every caller converges on one key by construction --
+    not by whichever format happened to be at hand.
     """
+    canonical = datetime.fromisoformat(iso_timestamp).isoformat()
     return {
         "pk": hh_pk(household_id),
-        "sk": f"SUGGESTION#{iso_timestamp}#{suggestion_id}",
+        "sk": f"SUGGESTION#{canonical}#{suggestion_id}",
     }
 
 
