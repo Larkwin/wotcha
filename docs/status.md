@@ -156,6 +156,16 @@ real week has been planned, published and texted.
 
 ## Next — ordered
 
+0. **Liaison v1 — designed, not built.**
+   `docs/superpowers/specs/2026-08-24-liaison-design.md`. Inbound text from a
+   known member becomes one `SUGGESTION#` row, enriched by a Strands agent
+   that grounds it against the roster; the cook approves on their page and
+   approval creates a `Meal` with `status=CANDIDATE` — the status that has
+   existed and gone unused since M1. Signals, outcomes and replies are
+   deliberately out: the first two need attribution the agent cannot yet be
+   trusted with, and the third spends against the SMS ceiling. Starts on
+   `ca.amazon.nova-lite-v1:0`.
+
 1. **M2 — Liaison.** The structural gate: inbound free-text signals,
    suggestions, disruption capture and "what's for dinner tonight?" all arrive
    through it. **The transport is done** — inbound is live and messages are
@@ -266,16 +276,23 @@ the answer; the quota increase is not.
 
 ## Known gaps in the research plan
 
+Now planned properly in `docs/model-evaluation.md`, which carries the corrected
+model ladder, the per-agent scorecards with a data-status column, and the
+replay harness design. **It is a plan to execute after M3, not now** — §13's
+first guardrail is that the study "has strong gravity and could quietly become
+the project", and that assessment stands.
+
+
 - **§13's escalation scorecard has no data source.** It scores against
   labelled unsatisfiable scenarios, and real weeks are satisfiable by design.
   Those must be authored; nothing authors them.
-- **The eval corpus has an unmarked prompt boundary at this commit.** The
+- **The eval corpus has an unmarked prompt boundary at 2026-08-24.** The
   Planner's system prompt changed when `get_recent_weeks` started resolving
   outcomes, and `put_eval_record` stores `model_id` but nothing identifying
   the prompt — so records either side of the change are indistinguishable on
   replay. Six records predate it. Stamping a prompt version alongside
-  `model_id` is the fix and is its own small item; until then the boundary is
-  a date, recorded here.
+  `model_id` is the fix, it gets harder to backfill every week, and it is one
+  of four data-capture gaps now enumerated in `docs/model-evaluation.md`.
 - **Corpus size, not corpus correctness.** Eval records capture `model_id`,
   attempt count, validity, violations and the typed claim tags, so the Planner
   scorecard is computable. But first-pass validity over a handful of real
