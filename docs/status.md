@@ -235,10 +235,14 @@ real week has been planned, published and texted.
 - **A mid-week manual `plan_week` makes the page show next week.** Right on a
   Saturday, wrong on a Wednesday. There is currently a published,
   never-notified week sitting one week out.
-- **A novel off-list substitute is not in `Suggestion`.** It is conceptually a
-  suggestion — someone names a meal on the `/o/` page and asks "what if we had
-  this instead?" — but it lands in `Outcome` rather than in the `Suggestion`
-  table designed for inbound. That design boundary is still open.
+- **Off-list nights have no name field.** An off-list outcome records only the
+  flag `Substitute.OFF_LIST` with no name — the household ate something, and the
+  system does not know what. The flag is valuable as-is: off-list nights are the
+  roster's own health metric, the evidence behind a Curator proposing an
+  audition, countable precisely because they remain distinguishable from silence.
+  The open boundary is that there is nowhere to put the name *if* someone wanted
+  to say what they ate instead — that field does not exist on the `/o/` path, and
+  if it did, what it captured would be a suggestion (`Suggestion`'s table).
 - **A known substitute is not history the Planner can see.** `get_recent_weeks`
   now says a swapped night's planned meal was not eaten, but not what replaced
   it, so a named substitute can be planned again the following week as though
