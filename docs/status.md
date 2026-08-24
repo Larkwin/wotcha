@@ -10,7 +10,7 @@ being done yet.
 | | |
 |---|---|
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
-| Suite | 297 tests, lint clean, Python 3.12 and 3.14 |
+| Suite | 355 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
 | Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
@@ -18,6 +18,7 @@ being done yet.
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
 | Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ, in CDK. No consumer yet |
+| Liaison | inbound → `SUGGESTION#` → cook's page, deployed. **Never exercised on a real message.** |
 | SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
 ## Done
@@ -33,6 +34,27 @@ real week has been planned, published and texted.
 
 **Since M1:**
 
+- **The Liaison is live, and it only ever proposes.** An inbound text from a
+  known member becomes one `SUGGESTION#` row; the cook approves it on their
+  page and approval creates a `Meal` with `status=CANDIDATE` — the status
+  that had existed as the model default since M1 and never once been used.
+  A candidate is on the roster and not plannable, so approving adds an idea
+  without putting it on next week's table.
+
+  The agent has no tools. The roster is rendered into its prompt, so there is
+  no mechanism by which it could reach the roster, the fence or a week — it
+  returns a value and the consumer decides what to persist. A model outage
+  degrades to an honest `unknown` read rather than a lost message.
+
+  Signals, outcomes and replies are still deferred: the first two need
+  attribution the agent is not yet trusted with, the third spends against the
+  SMS ceiling. What survives is the **label** — every suggestion records the
+  `kind` the agent believed it to be, so `extraction_accuracy` is measurable
+  before the extraction is trusted.
+
+  Runs on `ca.amazon.nova-lite-v1:0` via `WOTCHA_LIAISON_MODEL_ID`, and writes
+  `kind: "extraction"` eval records — the corpus now has two agents in it
+  rather than one.
 - **Model ladder settled** — Strands' `BedrockModel` reaches the open-weight
   rungs through Project Mantle, so §13 keeps all five rather than degrading to
   three. Note the catalogue does not list them; round-trip before concluding
@@ -155,16 +177,6 @@ real week has been planned, published and texted.
   publishes sits in INSUFFICIENT_DATA forever.
 
 ## Next — ordered
-
-0. **Liaison v1 — designed, not built.**
-   `docs/superpowers/specs/2026-08-24-liaison-design.md`. Inbound text from a
-   known member becomes one `SUGGESTION#` row, enriched by a Strands agent
-   that grounds it against the roster; the cook approves on their page and
-   approval creates a `Meal` with `status=CANDIDATE` — the status that has
-   existed and gone unused since M1. Signals, outcomes and replies are
-   deliberately out: the first two need attribution the agent cannot yet be
-   trusted with, and the third spends against the SMS ceiling. Starts on
-   `ca.amazon.nova-lite-v1:0`.
 
 1. **M2 — Liaison.** The structural gate: inbound free-text signals,
    suggestions, disruption capture and "what's for dinner tonight?" all arrive

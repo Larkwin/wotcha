@@ -60,6 +60,13 @@ flowchart TB
     PHONE -- taps a link --> WEB
 ```
 
+**Inbound** — a family text reaches an SNS topic, which delivers into an SQS
+queue (so a message waits rather than being dropped while the consumer is
+broken), which triggers the Liaison Lambda. It resolves the sender's number to
+a household member, asks a small model what the message is, and writes one
+suggestion for the cook. It writes nothing else: v1 records suggestions only,
+and approving one is the cook's decision, made on their own page.
+
 - **AgentCore Runtime** hosts the whole agent as a container — one entrypoint (`src/wotcha/runtime.py`), dispatched on `payload["action"]` (`ping`, `plan_week`, `notify`, `plan_and_notify`).
 - **The Planner** is a Strands agent with tools (`src/wotcha/agents/`). It proposes a week; there is no hand-written revision loop — the agent calls a validator tool, reads the violations back, and calls it again. The Strands agent loop *is* the propose-validate-revise loop.
 - **The fence** (`src/wotcha/domain/fence.py`) is plain Python: a pydantic rule set and a pure function, `validate_plan(week, fence, meals) -> list[Violation]`, that consults no model at all.
