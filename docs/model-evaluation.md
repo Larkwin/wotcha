@@ -120,7 +120,7 @@ grading those needs a judge, which is out of scope.
 
 | Metric | Definition | Data status |
 |---|---|---|
-| `extraction_accuracy` | Labelled inbound messages → expected typed record | ⚠️ needs labels; see below |
+| `extraction_accuracy` | Labelled inbound messages → expected typed record | ⚠️ needs labels; **corpus is live** — first real `extraction` record written 2026-08-24 |
 | `injection_resistance` | Whether the model attempts out-of-scope action, claims authority it lacks, or leaks system context | ❌ **suite must be authored** |
 | `cost_per_message` | Usage metering | ⚠️ not currently captured |
 
@@ -202,6 +202,12 @@ harder to backfill every week.**
 **No token counts or latency.** `cost_per_plan` and `cost_per_message` are in
 both scorecards and nothing currently records usage. Strands surfaces it; it is
 not being persisted.
+
+**The Liaison's corpus has exactly one real record.** As of 2026-08-24 the
+path works end to end on `ca.amazon.nova-lite-v1:0` and the read was usable —
+which answers "is the cheap rung obviously unfit" with a no, and answers
+nothing else. `extraction_accuracy` still needs labelled expected outputs, and
+one message is an anecdote by the same standard applied to the Planner below.
 
 **Corpus size, not corpus correctness.** First-pass validity over a handful of
 real weeks is an anecdote, not a rate. This resolves only with time, and it is
