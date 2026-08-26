@@ -311,6 +311,21 @@ class WotchaStack(Stack):
 
         inbound = sqs.Queue(
             self, "Inbound",
+            # Six times the Liaison's 60s timeout, per AWS's rule for a queue
+            # used as a Lambda event source: "set the source queue's visibility
+            # timeout to at least six times the configuration timeout on your
+            # function", so Lambda can retry a throttled batch before the
+            # message becomes visible again.
+            #
+            # The floor is not advisory. Lambda validates function timeout <=
+            # visibility timeout when the event source mapping is created and
+            # refuses outright -- the queue's SQS default of 30s against a 60s
+            # function failed the deploy with "Queue visibility timeout: 30
+            # seconds is less than Function timeout: 60 seconds". Nothing
+            # catches that before CloudFormation does: `cdk synth` renders both
+            # resources happily, because the constraint lives in the Lambda
+            # service rather than in either resource's own schema.
+            visibility_timeout=Duration.seconds(360),
             queue_name="wotcha-inbound",
             # Household data: a family member's actual words, not yet read by
             # anything. A stack mistake must not eat them -- and note the
