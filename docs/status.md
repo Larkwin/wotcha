@@ -18,7 +18,7 @@ being done yet.
 | Table | one household: 4 members, 9 meals, 4 weeks, 3 signals, 1 drift case, 6 eval records |
 | Reachable | one handset verified. **The rest of the family is not yet on file.** |
 | Inbound SMS | two-way **live and proven** on the long code — SNS topic → SQS queue + DLQ, in CDK. Consumer: Liaison Lambda |
-| Liaison | inbound → `SUGGESTION#` → cook's page, deployed. **Never exercised on a real message.** |
+| Liaison | inbound → `SUGGESTION#` → cook's page. **Proven end to end 2026-08-24** — a real text produced a card the cook could act on |
 | SMS budget | $1.00/month. In the sandbox that is the **maximum**, not a default — see below. Alarm at $0.50, deployed, one confirmed subscriber |
 
 ## Done
@@ -34,6 +34,24 @@ real week has been planned, published and texted.
 
 **Since M1:**
 
+- **The Liaison works on a real message.** 2026-08-24: a text from a verified
+  handset became a `SUGGESTION#` row, and the cook's page showed the words
+  sent, the agent's one-line summary, and an approve/decline control. That
+  closed the two things the branch shipped unproven — the
+  `bedrock:InvokeModelWithResponseStream` grant, which had never been
+  exercised and would have failed with `AccessDenied`; and whether
+  `ca.amazon.nova-lite-v1:0` could do the extraction at all.
+
+  **One message is not a rate.** The same caution the Planner's corpus gets
+  applies here: this says the path works and the cheap rung is not obviously
+  unfit, not that the reads are good. `docs/model-evaluation.md` is where that
+  question gets answered, and this is its first real data point.
+
+  Getting there took one deploy failure worth remembering: Lambda validates
+  `function timeout <= queue visibility timeout` when it creates an event
+  source mapping, and the queue had taken SQS's 30s default against the
+  Liaison's 60s. `cdk synth` cannot catch it — the constraint lives in the
+  Lambda service, not in either resource's schema.
 - **The Liaison is deployed, and it only ever proposes.** An inbound text from a
   known member becomes one `SUGGESTION#` row; the cook approves it on their
   page and approval creates a `Meal` with `status=CANDIDATE` — the status
