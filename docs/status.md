@@ -10,7 +10,7 @@ being done yet.
 | | |
 |---|---|
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
-| Suite | 355 tests, lint clean, Python 3.12 and 3.14 |
+| Suite | 365 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
 | Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
