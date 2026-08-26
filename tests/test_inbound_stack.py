@@ -64,14 +64,26 @@ def test_raw_message_delivery_is_never_enabled():
     assert "raw_message_delivery" not in CODE
 
 
+def _construct_block(construct_id: str) -> str:
+    """The source of one CDK construct, bounded by the next one.
+
+    Not a fixed character window. This used to slice 700 characters and broke
+    the moment a construct grew a long comment -- which is a test failing for
+    a reason that has nothing to do with what it asserts. The constructs in
+    this file are declared one after another, so the next `self, "` is the
+    honest end of this one.
+    """
+    start = STACK.index(f'self, "{construct_id}",')
+    nxt = STACK.find('self, "', start + len(f'self, "{construct_id}",'))
+    return STACK[start:nxt if nxt != -1 else len(STACK)]
+
+
 @pytest.mark.parametrize("construct_id", ["InboundDlq", "Inbound"])
 def test_the_inbound_queues_are_retained(construct_id):
     """A queue here holds a family member's actual words, not yet read by
     anything. Same standing as the table and the signing key: a bad deploy
     must not be able to eat it."""
-    start = STACK.index(f'self, "{construct_id}",')
-    block = STACK[start:start + 700]
-    assert "RemovalPolicy.RETAIN" in block
+    assert "RemovalPolicy.RETAIN" in _construct_block(construct_id)
 
 
 def test_the_dead_letter_queue_is_actually_wired_up():
@@ -163,9 +175,7 @@ def test_the_liaison_function_uses_the_bundle_that_installs_strands_agents():
     )
     assert var_match, "no variable is built from the strands-agents bundle"
 
-    start = STACK.index('self, "Liaison",')
-    block = STACK[start:start + 700]
-    assert f"code={var_match.group(1)}," in block, (
+    assert f"code={var_match.group(1)}," in _construct_block("Liaison"), (
         "the Liaison Function is not passed the asset that gets "
         "strands-agents installed into it"
     )
@@ -183,3 +193,50 @@ def test_the_consumer_batches_small():
     cross-file dependency from this failing test, not from a production
     incident."""
     assert "batch_size=1" in CODE
+
+
+def test_the_queue_can_hold_a_message_as_long_as_the_function_may_run():
+    """The constraint that failed a real deploy, computed rather than pinned.
+
+    Lambda validates `function timeout <= queue visibility timeout` when the
+    event source mapping is created, and refuses the deploy otherwise:
+
+        Queue visibility timeout: 30 seconds is less than
+        Function timeout: 60 seconds
+
+    Nothing caught it before CloudFormation did. `cdk synth` renders both
+    resources happily, because the rule lives in the Lambda service rather
+    than in either resource's own schema, and the queue had simply never been
+    given a visibility timeout -- so it took SQS's 30s default while the
+    Liaison was given 60s.
+
+    Asserted as arithmetic against the two real values, not as a literal, so
+    raising the function timeout without raising the queue's fails here rather
+    than at 7pm against a rolling-back stack. The 6x factor is AWS's stated
+    rule for a queue used as a Lambda event source -- the headroom is what
+    lets Lambda retry a throttled batch before the message becomes visible
+    again -- so this pins the recommendation, not merely the hard floor.
+    """
+    fn_match = re.search(r"timeout=Duration\.seconds\((\d+)\)",
+                         _construct_block("Liaison"))
+    assert fn_match, "the Liaison Function has no explicit timeout"
+    fn_timeout = int(fn_match.group(1))
+
+    q_match = re.search(r"visibility_timeout=Duration\.seconds\((\d+)\)",
+                        _construct_block("Inbound"))
+    assert q_match, (
+        "the inbound queue has no explicit visibility_timeout -- it would take "
+        "SQS's 30s default, and Lambda refuses an event source mapping whose "
+        "function timeout exceeds it"
+    )
+    visibility = int(q_match.group(1))
+
+    assert visibility >= fn_timeout, (
+        f"visibility timeout {visibility}s is below the Liaison's "
+        f"{fn_timeout}s timeout -- Lambda will refuse the event source mapping"
+    )
+    assert visibility >= fn_timeout * 6, (
+        f"visibility timeout {visibility}s is above the hard floor but below "
+        f"AWS's recommended 6x ({fn_timeout * 6}s), which is the headroom that "
+        f"lets Lambda retry a throttled batch"
+    )
