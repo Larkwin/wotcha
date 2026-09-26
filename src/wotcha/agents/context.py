@@ -16,6 +16,9 @@ class Context:
     repo: Repository
     household_id: str
     model_id: str
+    # Stamped beside model_id on every eval record, so replay can tell a
+    # change of model from a change of prompt. See agents/prompt_version.py.
+    prompt_version: str
     attempt: int = 0
     max_attempts: int = 6
     # Set True only by publish_plan's success path. plan_week reads this
@@ -42,13 +45,14 @@ def set_context(
     repo: Repository,
     household_id: str,
     model_id: str,
+    prompt_version: str,
     max_attempts: int = 6,
     week_start: date | None = None,
 ) -> None:
     global _context
     _context = Context(
         repo=repo, household_id=household_id, model_id=model_id,
-        max_attempts=max_attempts, week_start=week_start,
+        prompt_version=prompt_version, max_attempts=max_attempts, week_start=week_start,
     )
 
 

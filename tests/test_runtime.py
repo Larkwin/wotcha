@@ -284,7 +284,7 @@ def _replanning_planner(repo, household_id, week_start, model_id, region):
     there. Every invocation composes a fresh (legal) week, exactly as a real
     replan does."""
     agent_context.set_context(repo=repo, household_id=household_id,
-                              model_id=model_id)
+                              model_id=model_id, prompt_version="test-prompt")
     pt.publish_plan(week_start.isoformat(), [
         {"on_date": (week_start + timedelta(days=i)).isoformat(),
          "meal_id": "chili", "rationale": "Cook once, eat twice.", "claims": []}
@@ -369,7 +369,8 @@ def test_plan_and_notify_sends_an_escalation_to_the_cook_and_nobody_else(
 
     def escalating_planner(*, repo, household_id, week_start, model_id, region):
         agent_context.set_context(repo=repo, household_id=household_id,
-                                  model_id=model_id, week_start=week_start)
+                                  model_id=model_id, prompt_version="test-prompt",
+                                  week_start=week_start)
         pt.escalate("fence_unsatisfiable",
                     "Flat Sushi Day and the chicken target collide. Which gives?")
         return {"published": False, "escalated": True, "attempts": 6,
@@ -398,7 +399,8 @@ def test_an_escalation_already_sent_is_not_sent_again(monkeypatch, seeded):
     reading the messages -- the same reasoning as Week.notified_at."""
     def escalating_planner(*, repo, household_id, week_start, model_id, region):
         agent_context.set_context(repo=repo, household_id=household_id,
-                                  model_id=model_id, week_start=week_start)
+                                  model_id=model_id, prompt_version="test-prompt",
+                                  week_start=week_start)
         pt.escalate("fence_unsatisfiable", "Which tradition gives?")
         return {"published": False, "escalated": True, "attempts": 6,
                 "text": "Escalated."}
@@ -510,7 +512,8 @@ def test_a_resolved_week_frees_the_cook_from_being_reasked(monkeypatch, seeded):
 
     def escalating_planner(*, repo, household_id, week_start, model_id, region):
         agent_context.set_context(repo=repo, household_id=household_id,
-                                  model_id=model_id, week_start=week_start)
+                                  model_id=model_id, prompt_version="test-prompt",
+                                  week_start=week_start)
         pt.escalate("fence_unsatisfiable", "Week two?")
         return {"published": False, "escalated": True, "attempts": 6, "text": "no"}
 

@@ -71,7 +71,8 @@ def repo():
             FixedSlotRule(weekday=1, meal_id="flat-sushi"),
             TakeoutBudgetRule(max_per_week=1),
         ]))
-        context.set_context(repo=r, household_id=HID, model_id="test-model")
+        context.set_context(repo=r, household_id=HID, model_id="test-model",
+                            prompt_version="test-prompt")
         yield r
 
 
@@ -145,6 +146,7 @@ def test_every_validation_attempt_is_logged(repo):
     records = repo._query_prefix(HID, "EVAL#")
     assert len(records) == 2
     assert records[0]["model_id"] == "test-model"
+    assert {r["prompt_version"] for r in records} == {"test-prompt"}
     assert {r["attempt"] for r in records} == {1, 2}
     # Guards the corpus: if validate_plan_tool ever wrote the wrong kind (say,
     # by copy-pasting publish_plan's "publish_refusal"), this suite would
@@ -203,6 +205,7 @@ def test_escalation_row_is_readable_by_the_repository_reader(repo):
     """Written through put_escalation, not straight at the table, so the
     reader the runtime depends on can actually find it."""
     context.set_context(repo=repo, household_id=HID, model_id="test-model",
+                        prompt_version="test-prompt",
                         week_start=date(2026, 8, 24))
     pt.escalate("fence_unsatisfiable", "Two traditions collide. Which gives?")
     row = repo.latest_unresolved_escalation(HID)
@@ -247,6 +250,7 @@ def test_publish_refusal_is_logged_as_a_publish_refusal_record(repo):
     record = records[0]
     assert record["kind"] == "publish_refusal"
     assert record["model_id"] == "test-model"
+    assert record["prompt_version"] == "test-prompt"
     assert record["week_start"] == MONDAY
     assert record["violations"]
     assert record["attempt"] == 0  # publish_plan was called with no prior validation

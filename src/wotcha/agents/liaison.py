@@ -14,10 +14,13 @@ this is meant to run on. Strands' own structured_output documentation says as
 much: "For smaller models, you may want to use the optional prompt to add
 additional instructions."
 """
+import json
+
 from pydantic import BaseModel, Field
 from strands import Agent
 from strands.models import BedrockModel
 
+from wotcha.agents.prompt_version import fingerprint
 from wotcha.domain.models import Meal, MealStatus, SuggestionKind
 
 
@@ -80,6 +83,20 @@ otherwise.
 """
 
 
+# The user turn wrapped around each message. Part of the prompt, so part of
+# the fingerprint below; the roster and the message are the scenario.
+LIAISON_MESSAGE_TEMPLATE = "{roster}\n\nThe message:\n{text}"
+
+# Stamped on every extraction eval record beside model_id. The output schema
+# is included because structured_output hands it to the model as a tool spec,
+# field names and docstrings and all.
+LIAISON_PROMPT_VERSION = fingerprint(
+    LIAISON_SYSTEM_PROMPT,
+    LIAISON_MESSAGE_TEMPLATE,
+    json.dumps(LiaisonRead.model_json_schema(), sort_keys=True),
+)
+
+
 def render_roster(meals: list[Meal]) -> str:
     """The household's cookable list, as the model sees it.
 
@@ -112,7 +129,7 @@ def _structured_read(text: str, roster: str, model_id: str, region: str) -> Liai
     agent = build_liaison(model_id=model_id, region=region)
     return agent.structured_output(
         LiaisonRead,
-        f"{roster}\n\nThe message:\n{text}",
+        LIAISON_MESSAGE_TEMPLATE.format(roster=roster, text=text),
     )
 
 

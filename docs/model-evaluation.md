@@ -156,7 +156,7 @@ written.**
 | Publish-time refusals distinguishable from validation attempts | ✅ done — separate `kind` |
 | Liaison extraction logged | ⬜ v1 requirement — `kind: "extraction"` |
 | `model_id` on every record | ✅ done |
-| **Prompt version on every record** | ❌ **missing** — see gaps |
+| Prompt version on every record | ✅ done — `prompt_version`, a content hash; absent on records that predate it |
 | Token counts and latency per call | ❌ missing — needed for `cost_per_*` |
 
 ---
@@ -192,12 +192,14 @@ the replay harness is.
 places the jailbreak demo at M4; the suite it demos is the same artifact and
 should be written once.
 
-**The eval corpus has an unmarked prompt boundary.** `put_eval_record` stores
-`model_id` and nothing identifying the prompt. The Planner's system prompt
-changed on 2026-08-24 when `get_recent_weeks` began resolving outcomes, so
-records either side are indistinguishable on replay. Six records predate it.
-**Stamping a prompt version alongside `model_id` is a small change that gets
-harder to backfill every week.**
+**The eval corpus has one unmarked prompt boundary.** `put_eval_record` now
+stores `prompt_version` beside `model_id` — a content hash of the system
+prompt, the kickoff or message template, and the tool or output schemas — so
+from the deploy that carries it, a change of prompt is always distinguishable
+from a change of model. Records written before that carry no version. The
+Planner's system prompt changed on 2026-08-24 when `get_recent_weeks` began
+resolving outcomes, and records either side of that change can be separated
+only by timestamp. Six records predate it.
 
 **No token counts or latency.** `cost_per_plan` and `cost_per_message` are in
 both scorecards and nothing currently records usage. Strands surfaces it; it is
