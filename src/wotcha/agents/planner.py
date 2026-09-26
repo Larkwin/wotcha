@@ -5,6 +5,7 @@ reads the violations, and calls it again -- the Strands agent loop is the loop.
 The system prompt below is what makes that converge, so treat it as source code:
 change it deliberately, and expect the eval numbers to move when you do.
 """
+import json
 from datetime import date
 
 from strands import Agent
@@ -12,6 +13,7 @@ from strands.models import BedrockModel
 
 from wotcha.agents import context
 from wotcha.agents.planner_tools import PLANNER_TOOLS
+from wotcha.agents.prompt_version import fingerprint
 from wotcha.store.repo import Repository
 
 MAX_ATTEMPTS = 6
@@ -128,6 +130,24 @@ about an ordinary meal choice. Deciding is your job.
 """
 
 
+# The opening user turn. A template rather than an inline f-string so that it
+# can be fingerprinted below: it is part of what the model is told.
+PLANNER_KICKOFF = (
+    "Plan the week beginning Monday {week_start}. "
+    "Validate before publishing. You have at most {max_attempts} validation "
+    "attempts before you should escalate instead."
+)
+
+# Stamped on every Planner eval record beside model_id. Tool specs are
+# included because their docstrings are instructions the model reads -- an
+# edited tool description changes behaviour as surely as an edited prompt.
+PLANNER_PROMPT_VERSION = fingerprint(
+    PLANNER_SYSTEM_PROMPT,
+    PLANNER_KICKOFF.format(week_start="{week_start}", max_attempts=MAX_ATTEMPTS),
+    json.dumps([t.tool_spec for t in PLANNER_TOOLS], sort_keys=True),
+)
+
+
 def build_planner(model_id: str, region: str) -> Agent:
     return Agent(
         model=BedrockModel(model_id=model_id, region_name=region),
@@ -163,13 +183,12 @@ def plan_week(
     never be reported as a success.
     """
     context.set_context(repo=repo, household_id=household_id, model_id=model_id,
+                        prompt_version=PLANNER_PROMPT_VERSION,
                         max_attempts=MAX_ATTEMPTS, week_start=week_start)
     agent = build_planner(model_id=model_id, region=region)
-    result = agent(
-        f"Plan the week beginning Monday {week_start.isoformat()}. "
-        f"Validate before publishing. You have at most {MAX_ATTEMPTS} validation "
-        f"attempts before you should escalate instead."
-    )
+    result = agent(PLANNER_KICKOFF.format(
+        week_start=week_start.isoformat(), max_attempts=MAX_ATTEMPTS,
+    ))
     return {
         "published": context.get_context().published,
         "escalated": context.get_context().escalated,

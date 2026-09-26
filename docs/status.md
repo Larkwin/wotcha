@@ -10,7 +10,7 @@ being done yet.
 | | |
 |---|---|
 | Repo | `github.com/Larkwin/wotcha`, **public**, CI on every push and PR |
-| Suite | 365 tests, lint clean, Python 3.12 and 3.14 |
+| Suite | 371 tests, lint clean, Python 3.12 and 3.14 |
 | Region / model | `ca-central-1`, `us.anthropic.claude-sonnet-4-6` |
 | Model ladder | 4 rungs round-tripped from `ca-central-1`; Opus 5 gated on account model access |
 | Runtime | deployed, `WOTCHA_CHANNEL=sms`, live origination number |
@@ -328,13 +328,19 @@ the project", and that assessment stands.
 - **§13's escalation scorecard has no data source.** It scores against
   labelled unsatisfiable scenarios, and real weeks are satisfiable by design.
   Those must be authored; nothing authors them.
-- **The eval corpus has an unmarked prompt boundary at 2026-08-24.** The
-  Planner's system prompt changed when `get_recent_weeks` started resolving
-  outcomes, and `put_eval_record` stores `model_id` but nothing identifying
-  the prompt — so records either side of the change are indistinguishable on
-  replay. Six records predate it. Stamping a prompt version alongside
-  `model_id` is the fix, it gets harder to backfill every week, and it is one
-  of four data-capture gaps now enumerated in `docs/model-evaluation.md`.
+- **The eval corpus has one unmarked prompt boundary, and no more after
+  deploy.** Every eval record now carries `prompt_version` beside `model_id`:
+  a 12-character hash of what the agent is told — system prompt, kickoff or
+  message template, and tool or output schemas, whose docstrings are
+  instructions too (`src/wotcha/agents/prompt_version.py`). A hash rather
+  than a hand-bumped number, because a number someone forgets to bump
+  asserts two prompts were the same. It starts stamping at the next deploy
+  of the runtime and the Liaison Lambda.
+
+  **It does not repair what is already written.** Records without the field
+  predate it, and among those the Planner's 2026-08-24 prompt change — when
+  `get_recent_weeks` began resolving outcomes — is recoverable only by
+  timestamp against that day's deploy. Six records predate the change.
 - **Corpus size, not corpus correctness.** Eval records capture `model_id`,
   attempt count, validity, violations and the typed claim tags, so the Planner
   scorecard is computable. But first-pass validity over a handful of real

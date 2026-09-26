@@ -12,7 +12,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from wotcha.agents.liaison import read_message
+from wotcha.agents.liaison import LIAISON_PROMPT_VERSION, read_message
 from wotcha.domain.models import Suggestion
 from wotcha.inbound import parse_sqs_record
 from wotcha.store.repo import Repository
@@ -81,6 +81,7 @@ def handle_record(
         "timestamp": datetime.now(UTC).isoformat(),
         "kind": "extraction",
         "model_id": model_id,
+        "prompt_version": LIAISON_PROMPT_VERSION,
         "suggestion_id": message.message_id,
         "read_kind": read.kind.value,
         "matched": read.matched_meal_id,

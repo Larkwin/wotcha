@@ -4,7 +4,13 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from wotcha.agents.planner import PLANNER_SYSTEM_PROMPT, build_planner, plan_week
+from wotcha.agents import context
+from wotcha.agents.planner import (
+    PLANNER_PROMPT_VERSION,
+    PLANNER_SYSTEM_PROMPT,
+    build_planner,
+    plan_week,
+)
 from wotcha.agents.planner_tools import escalate
 from wotcha.domain.fence import (
     AssignmentRule,
@@ -271,3 +277,24 @@ def test_plan_week_reports_false_when_this_run_escalates_despite_a_prior_publish
     # "infer success from the store" logic would have reported True here.
     assert seeded.get_week(HID, date(2026, 8, 24)) is not None
     assert result["published"] is False
+
+
+def test_plan_week_stamps_the_real_prompt_version_on_its_context(seeded, monkeypatch):
+    """The tools read the version off the context, so plan_week is the one
+    place that can get it wrong for every record at once."""
+    seen = []
+
+    class FakeAgent:
+        def __call__(self, prompt: str) -> str:
+            seen.append(context.get_context().prompt_version)
+            return "Did nothing."
+
+    monkeypatch.setattr(
+        "wotcha.agents.planner.build_planner",
+        lambda model_id, region: FakeAgent(),
+    )
+    plan_week(
+        repo=seeded, household_id=HID, week_start=date(2026, 8, 24),
+        model_id="us.anthropic.claude-sonnet-4-6", region="ca-central-1",
+    )
+    assert seen == [PLANNER_PROMPT_VERSION]

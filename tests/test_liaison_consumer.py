@@ -98,6 +98,7 @@ def test_every_read_is_logged_for_the_eval_corpus(seeded):
     assert len(records) == 1
     assert records[0]["kind"] == "extraction"
     assert records[0]["model_id"] == "test-model"
+    assert records[0]["prompt_version"] == agent_liaison.LIAISON_PROMPT_VERSION
 
 
 def test_the_agent_is_not_asked_about_an_unknown_sender(seeded, monkeypatch):
